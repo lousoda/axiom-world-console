@@ -2,17 +2,34 @@
 
 AXIOM is a deterministic world simulation server: an explicit world state, tick-based execution, and rule-driven autonomy.
 
-Built for the **Moltiverse Hackathon (Agent Track)**. Monad integration is a planned next step.
+Built for the **Moltiverse Hackathon (Agent Track)**. Includes verified **Monad mainnet token‑gated entry**.
 
 Status: **MVP Freeze v1 (stable)**  
-No refactors or new features unless explicitly required for the submission.
 
-The MVP includes a minimal economy loop, autonomous agents, and JSON snapshot persistence.
+---
 
-This MVP demonstrates:
-1. A world-model + policy loop (agent decides → world applies) that stays inspectable.
-2. Deterministic, rule-based autonomy (idle / wander / earn) with explainability.
-3. Persistence (save/load) so the same world can be resumed and replayed.
+## Monad Mainnet Integration (Verified)
+
+This MVP includes a minimal, production‑valid integration with **Monad mainnet** to satisfy the Agent Track on‑chain requirement.
+
+**What is implemented:**
+- MON token‑gated world entry
+- On‑chain payment proof via transaction hash
+- Anti‑replay protection (tx hash cannot be reused)
+- Persistence‑safe verification (replay protection survives save/load)
+
+**Network:** Monad Mainnet (chainId `143`)
+
+**Treasury:** `0x833dD2b2c4085674E57B058126DD59235D893a2e`
+
+**Minimum entry fee:** `0.01 MON`
+
+**Example proof transaction:**
+`0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9`
+
+Verification is visible via:
+- `GET /debug/monad`
+- `GET /explain/recent`
 
 ---
 
@@ -49,6 +66,20 @@ Persistence:
 ---
 
 ## Demo in 60 seconds
+
+### Monad token‑gated entry demo
+
+```bash
+curl -s http://localhost:8001/debug/monad
+
+curl -s -X POST http://localhost:8001/join \
+  -H "Content-Type: application/json" \
+  -d '{"name":"alice","deposit_mon":0,"entry_tx_hash":"0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9"}'
+
+curl -s "http://localhost:8001/explain/recent?limit=20"
+```
+
+This demonstrates real on‑chain verification and deterministic replay protection.
 
 Start the server:
 ```bash
@@ -148,3 +179,11 @@ curl -s http://127.0.0.1:8000/debug/info | python3 -m json.tool
 ```
 
 If this endpoint responds, the agent world is live and ready for interaction.
+
+---
+
+## Project Scope Notes
+
+- This repository freezes **MVP v1** for hackathon submission stability.
+- Economy tuning, autonomy improvements, and A2A interactions are planned as **V2** work.
+- Monad integration is intentionally minimal and non‑invasive to preserve determinism and auditability.

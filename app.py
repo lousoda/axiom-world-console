@@ -4,7 +4,18 @@ from typing import Literal, Dict, Any, Optional, List
 import time
 import os
 import json
+import inspect
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
+import re
+import requests
+
+# =============================
+# Module-level constants
+# =============================
+MAX_LOGS = 5000
+MOVE_COST_MON = 1
 
 app = FastAPI(title="World Model Agent (MVP)")
 
@@ -19,6 +30,13 @@ def make_initial_world_state() -> Dict[str, Any]:
         "agents": [],
         "action_queue": [],
         "logs": [],
+        "economy": {
+            "workshop_capacity_per_tick": 1,
+            "workshop_capacity_left": 1,
+        },
+        "entry": {
+            "used_tx_hashes": [],
+        },
     }
 
 world_state: Dict[str, Any] = make_initial_world_state()
@@ -30,16 +48,20 @@ def reset_in_place() -> None:
     world_state.update(fresh)
 
 def log(event: str, data: Dict[str, Any]) -> None:
-    world_state.setdefault("logs", []).append({
+    logs = world_state.setdefault("logs", [])
+    logs.append({
         "time": time.time(),
         "tick": world_state.get("tick", 0),
         "event": event,
         "data": data,
     })
+    # keep memory bounded for long-running demos
+    if isinstance(logs, list) and len(logs) > MAX_LOGS:
+        del logs[: len(logs) - MAX_LOGS]
 
 def find_agent(agent_id: int) -> Dict[str, Any]:
     for a in world_state.get("agents", []):
-        if a.get("id") == agent_id:
+        if isinstance(a, dict) and a.get("id") == agent_id:
             return a
     raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -101,7 +123,7 @@ def _normalize_loaded_state(loaded: Dict[str, Any]) -> Dict[str, Any]:
     """
     base = make_initial_world_state()
 
-    for k in ["tick", "locations", "agents", "action_queue", "logs"]:
+    for k in ["tick", "locations", "agents", "action_queue", "logs", "economy", "entry"]:
         if k in loaded:
             base[k] = loaded[k]
 
@@ -120,17 +142,46 @@ def _normalize_loaded_state(loaded: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(base["logs"], list):
         base["logs"] = []
 
-    # Якщо у старих snapshot'ах агентів ще не було auto/cooldown/goal — додаємо дефолти
-    allowed_goals = {"earn", "wander", "idle"}
-    for a in base["agents"]:
-        if isinstance(a, dict):
-            a.setdefault("auto", False)
-            a.setdefault("cooldown_until_tick", 0)
-            a.setdefault("goal", "earn")
+    # Economy defaults (for older snapshots)
+    if not isinstance(base.get("economy"), dict):
+        base["economy"] = {}
+    base["economy"].setdefault("workshop_capacity_per_tick", 1)
+    base["economy"].setdefault(
+        "workshop_capacity_left",
+        base["economy"]["workshop_capacity_per_tick"],
+    )
 
-            # Санітизація goal (на випадок старих/битих snapshot'ів)
-            if a.get("goal") not in allowed_goals:
-                a["goal"] = "earn"
+    # Entry defaults (for older snapshots)
+    if not isinstance(base.get("entry"), dict):
+        base["entry"] = {}
+    used = base["entry"].get("used_tx_hashes")
+    if not isinstance(used, list):
+        used = []
+    norm_used: List[str] = []
+    for h in used:
+        if isinstance(h, str):
+            hh = h.strip().lower()
+            if hh.startswith("0x") and len(hh) >= 10:
+                norm_used.append(hh)
+    base["entry"]["used_tx_hashes"] = norm_used
+
+    # Keep only dict agents with id; ensure required fields so tick/auto don't KeyError
+    allowed_goals = {"earn", "wander", "idle"}
+    valid_agents: List[Dict[str, Any]] = []
+    for a in base["agents"]:
+        if not isinstance(a, dict) or a.get("id") is None:
+            continue
+        a.setdefault("pos", "spawn")
+        a.setdefault("balance_mon", 0)
+        a.setdefault("status", "active")
+        a.setdefault("inventory", [])
+        a.setdefault("auto", False)
+        a.setdefault("cooldown_until_tick", 0)
+        a.setdefault("goal", "earn")
+        if a.get("goal") not in allowed_goals:
+            a["goal"] = "earn"
+        valid_agents.append(a)
+    base["agents"] = valid_agents
 
     return base
 
@@ -193,13 +244,149 @@ def persist_status(path: Optional[str] = None):
 
 @app.post("/persist/save")
 def persist_save(req: PersistSaveRequest = Body(default=PersistSaveRequest())):
+    target = _snapshot_path(req.path)
+    # Log BEFORE saving so the snapshot includes this event.
+    log("persist_save", {"path": str(target), "include_logs": req.include_logs})
     res = save_world_state(path=req.path, include_logs=req.include_logs)
-    log("persist_save", {"path": res.get("path"), "include_logs": req.include_logs})
     return res
 
 @app.post("/persist/load")
 def persist_load(req: PersistLoadRequest = Body(default=PersistLoadRequest())):
     return load_world_state(path=req.path)
+
+# ============================================================
+# MONAD MAINNET (token-gated entry)
+# ============================================================
+
+MONAD_CHAIN_ID = int(os.getenv("MONAD_CHAIN_ID", "143"))
+MONAD_RPC_URL = os.getenv("MONAD_RPC_URL", "https://rpc.monad.xyz")
+MONAD_TREASURY_ADDRESS = os.getenv("MONAD_TREASURY_ADDRESS", "").strip()
+
+MIN_ENTRY_FEE_WEI_ENV = os.getenv("MIN_ENTRY_FEE_WEI", "").strip()
+MIN_ENTRY_FEE_MON_ENV = os.getenv("MIN_ENTRY_FEE_MON", "").strip()
+
+ALLOW_FREE_JOIN = os.getenv("ALLOW_FREE_JOIN", "false").strip().lower() in {"1", "true", "yes"}
+
+TX_HASH_RE = re.compile(r"^0x[a-fA-F0-9]{64}$")
+ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+
+
+def _parse_min_fee_wei() -> int:
+    if MIN_ENTRY_FEE_WEI_ENV:
+        try:
+            return int(MIN_ENTRY_FEE_WEI_ENV)
+        except Exception:
+            return 0
+    if MIN_ENTRY_FEE_MON_ENV:
+        try:
+            mon = float(MIN_ENTRY_FEE_MON_ENV)
+            if mon <= 0:
+                return 0
+            return int(mon * (10 ** 18))
+        except Exception:
+            return 0
+    return 0
+
+
+def _rpc_call(method: str, params: list) -> Any:
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    last_err = None
+    for attempt in range(2):
+        try:
+            r = requests.post(MONAD_RPC_URL, json=payload, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            break
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                continue
+            raise HTTPException(status_code=502, detail=f"Monad RPC error: {e}")
+    else:
+        raise HTTPException(status_code=502, detail=f"Monad RPC error: {last_err}")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Monad RPC returned non-JSON response")
+
+    if data.get("error"):
+        raise HTTPException(status_code=502, detail=f"Monad RPC error: {data.get('error')}")
+
+    return data.get("result")
+
+
+def _hex_to_int(x: Any) -> int:
+    if x is None:
+        return 0
+    if isinstance(x, int):
+        return x
+    if isinstance(x, str):
+        s = x.strip().lower()
+        if s.startswith("0x"):
+            try:
+                return int(s, 16)
+            except Exception:
+                return 0
+        try:
+            return int(s)
+        except Exception:
+            return 0
+    return 0
+
+
+def verify_entry_tx(tx_hash: str) -> Dict[str, Any]:
+    txh = (tx_hash or "").strip().lower()
+    if not TX_HASH_RE.match(txh):
+        raise HTTPException(status_code=400, detail="Invalid entry_tx_hash format")
+
+    if not MONAD_TREASURY_ADDRESS or not ADDRESS_RE.match(MONAD_TREASURY_ADDRESS):
+        raise HTTPException(status_code=500, detail="Server misconfigured: MONAD_TREASURY_ADDRESS not set")
+
+    min_fee_wei = _parse_min_fee_wei()
+    if min_fee_wei <= 0:
+        raise HTTPException(status_code=500, detail="Server misconfigured: MIN_ENTRY_FEE_WEI or MIN_ENTRY_FEE_MON not set")
+
+    used = world_state.setdefault("entry", {}).setdefault("used_tx_hashes", [])
+    if isinstance(used, list) and txh in [str(x).lower() for x in used if isinstance(x, str)]:
+        raise HTTPException(status_code=409, detail="Entry tx hash already used")
+
+    tx = _rpc_call("eth_getTransactionByHash", [txh])
+    if not tx or not isinstance(tx, dict):
+        raise HTTPException(status_code=404, detail="Transaction not found on Monad mainnet")
+
+    receipt = _rpc_call("eth_getTransactionReceipt", [txh])
+    if not receipt or not isinstance(receipt, dict):
+        raise HTTPException(status_code=404, detail="Transaction receipt not found (not confirmed yet)")
+
+    status = _hex_to_int(receipt.get("status"))
+    if status != 1:
+        raise HTTPException(status_code=400, detail="Transaction failed (status != 1)")
+
+    _to = tx.get("to")
+    to_addr = (_to if isinstance(_to, str) else "").strip().lower()
+    if to_addr != MONAD_TREASURY_ADDRESS.strip().lower():
+        raise HTTPException(status_code=400, detail="Transaction recipient does not match treasury")
+
+    value_wei = _hex_to_int(tx.get("value"))
+    if value_wei < min_fee_wei:
+        raise HTTPException(status_code=402, detail="Insufficient MON paid for entry")
+
+    tx_chain_id = tx.get("chainId")
+    if tx_chain_id is not None and _hex_to_int(tx_chain_id) != MONAD_CHAIN_ID:
+        raise HTTPException(status_code=400, detail="Transaction chainId does not match Monad mainnet")
+
+    _frm = tx.get("from")
+    frm = (_frm if isinstance(_frm, str) else "").strip().lower()
+    block_number = _hex_to_int(receipt.get("blockNumber"))
+
+    return {
+        "ok": True,
+        "tx_hash": txh,
+        "from": frm,
+        "to": to_addr,
+        "value_wei": value_wei,
+        "min_fee_wei": min_fee_wei,
+        "block_number": block_number,
+    }
 
 # ============================================================
 # BASIC
@@ -222,6 +409,30 @@ def debug_info():
         "agents": len(world_state.get("agents", [])),
     }
 
+# Debug endpoint to show which file and version of _auto_policy_for_agent is running
+@app.get("/debug/source")
+def debug_source():
+    # Prove which file uvicorn actually imported, and show whether the autopolicy includes the funds-guard text.
+    try:
+        src = inspect.getsource(_auto_policy_for_agent)
+    except Exception as e:
+        src = f"<inspect failed: {e}>"
+
+    lines = src.splitlines()
+    return {
+        "ok": True,
+        "module_file": __file__,
+        "cwd": os.getcwd(),
+        # coarse: any guard text
+        "has_any_insufficient_funds_guard": "insufficient funds" in src,
+        # specific: the three guards we expect
+        "has_guard_recent_capacity_denial": "recent capacity denial but insufficient funds for move" in src,
+        "has_guard_wander": "wander but insufficient funds for move" in src,
+        "has_guard_not_in_workshop": "not in workshop" in src and "insufficient funds for move" in src,
+        "auto_policy_num_lines": len(lines),
+        "auto_policy_first_120_lines": "\n".join(lines[:120]),
+    }
+
 @app.get("/debug/routes")
 def debug_routes():
     routes = []
@@ -242,6 +453,8 @@ def get_world():
         "agents": world_state.get("agents", []),
         "queued_actions": len(world_state.get("action_queue", [])),
         "logs": len(world_state.get("logs", [])),
+        "economy": world_state.get("economy", {}),
+        "entry": world_state.get("entry", {}),
     }
 
 @app.get("/logs")
@@ -262,9 +475,40 @@ def get_agent(agent_id: int):
 class JoinRequest(BaseModel):
     name: str = Field(min_length=1, max_length=32)
     deposit_mon: int = Field(default=0, ge=0)
+    entry_tx_hash: Optional[str] = None
+    wallet_address: Optional[str] = None
 
 @app.post("/join")
 def join(req: JoinRequest):
+    # MON token-gated entry (Monad mainnet)
+    if not ALLOW_FREE_JOIN:
+        if not req.entry_tx_hash:
+            log("entry_denied_missing_tx", {"name": req.name})
+            raise HTTPException(status_code=402, detail="Payment required: provide entry_tx_hash")
+
+        v = verify_entry_tx(req.entry_tx_hash)
+        entry = world_state.setdefault("entry", {})
+        if not isinstance(entry, dict):
+            entry = {}
+            world_state["entry"] = entry
+        used = entry.get("used_tx_hashes", [])
+        if not isinstance(used, list):
+            used = []
+            entry["used_tx_hashes"] = used
+        used.append(v["tx_hash"])
+        log(
+            "entry_verified",
+            {
+                "name": req.name,
+                "tx_hash": v["tx_hash"],
+                "from": v.get("from"),
+                "to": v.get("to"),
+                "value_wei": v.get("value_wei"),
+                "min_fee_wei": v.get("min_fee_wei"),
+                "block_number": v.get("block_number"),
+            },
+        )
+
     agent = {
         "id": len(world_state["agents"]) + 1,
         "name": req.name,
@@ -275,7 +519,22 @@ def join(req: JoinRequest):
         "auto": False,
         "cooldown_until_tick": 0,
         "goal": "earn",
+        "entry_tx_hash": (req.entry_tx_hash or "").strip().lower() if req.entry_tx_hash else None,
+        "entry_payer": None,
+        "wallet_address": (req.wallet_address or "").strip().lower() if req.wallet_address else None,
     }
+
+    if not ALLOW_FREE_JOIN and req.entry_tx_hash:
+        try:
+            logs_list = world_state.get("logs", [])
+            if isinstance(logs_list, list) and len(logs_list) > 0:
+                last = logs_list[-1]
+                if isinstance(last, dict) and last.get("event") == "entry_verified":
+                    data = last.get("data") if isinstance(last.get("data"), dict) else {}
+                    agent["entry_payer"] = data.get("from")
+        except Exception:
+            pass
+
     world_state["agents"].append(agent)
     log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
     return {"ok": True, "agent": agent}
@@ -298,7 +557,10 @@ def act(req: ActRequest):
 
     if req.type == "move":
         to = payload.get("to")
-        if to is None or not isinstance(to, str) or to not in world_state["locations"]:
+        locs = world_state.get("locations", ["spawn", "market", "workshop"])
+        if not isinstance(locs, list):
+            locs = ["spawn", "market", "workshop"]
+        if to is None or not isinstance(to, str) or to not in locs:
             raise HTTPException(
                 status_code=400,
                 detail="move requires payload.to (string, one of: spawn, market, workshop)",
@@ -336,14 +598,32 @@ def tick(steps: int = Query(1, ge=1, le=100)):
     for _ in range(steps):
         world_state["tick"] += 1
 
-        queue = world_state["action_queue"]
+        # Reset economy capacity each tick
+        econ = world_state.get("economy", {})
+        if not isinstance(econ, dict):
+            econ = {}
+            world_state["economy"] = econ
+        cap_per_tick = int(econ.get("workshop_capacity_per_tick", 1))
+        econ["workshop_capacity_left"] = cap_per_tick
+
+        queue = world_state.get("action_queue", [])
+        if not isinstance(queue, list):
+            log("action_queue_corrupt", {"type": str(type(queue))})
+            queue = []
         world_state["action_queue"] = []
 
         applied_this_tick = 0
 
         for action in queue:
+            if not isinstance(action, dict):
+                log("action_skipped_invalid", {"action": action, "reason": "not a dict"})
+                continue
+            agent_id = action.get("agent_id")
+            if agent_id is None:
+                log("action_skipped_invalid", {"action": action, "reason": "missing agent_id"})
+                continue
             try:
-                agent = find_agent(action["agent_id"])
+                agent = find_agent(agent_id)
             except HTTPException:
                 log("action_skipped_unknown_agent", {"action": action})
                 continue
@@ -360,6 +640,23 @@ def tick(steps: int = Query(1, ge=1, le=100)):
                 if to is None or not isinstance(to, str) or to not in world_state.get("locations", []):
                     log("move_denied_invalid_payload", {"agent_id": agent.get("id"), "payload": payload})
                     continue
+
+                # Economy v2 sink: moving costs 1 MON
+                cost = MOVE_COST_MON
+                bal = int(agent.get("balance_mon", 0))
+                if bal < cost:
+                    log(
+                        "move_denied_insufficient_funds",
+                        {"agent_id": agent.get("id"), "pos": agent.get("pos"), "to": to, "balance_mon": bal, "cost": cost},
+                    )
+                    continue
+
+                agent["balance_mon"] = bal - cost
+                log(
+                    "move_cost",
+                    {"agent_id": agent.get("id"), "cost": cost, "balance_mon": agent["balance_mon"], "to": to},
+                )
+
                 agent["pos"] = to
                 log("move", {"agent_id": agent["id"], "to": agent["pos"]})
                 applied_this_tick += 1
@@ -368,9 +665,29 @@ def tick(steps: int = Query(1, ge=1, le=100)):
                 if agent["pos"] != "workshop":
                     log("earn_denied_wrong_location", {"agent_id": agent["id"], "pos": agent["pos"]})
                 else:
+                    # Economy v2: workshop capacity constraint per tick
+                    left = int(econ.get("workshop_capacity_left", 0))
+                    if left <= 0:
+                        log("earn_denied_capacity", {"agent_id": agent["id"], "pos": agent["pos"], "left": left})
+                        penalty_until = world_state["tick"] + 2  
+                        agent["cooldown_until_tick"] = max(int(agent.get("cooldown_until_tick", 0)), penalty_until)
+                        log("cooldown_penalty", {"agent_id": agent["id"], "until": agent["cooldown_until_tick"], "reason": "capacity"})
+                        agent["last_denied_reason"] = "capacity"
+                        agent["last_denied_tick"] = world_state["tick"]
+                        continue
+
                     amount = payload.get("amount", 1)
-                    agent["balance_mon"] += int(amount)
-                    log("earn", {"agent_id": agent["id"], "amount": int(amount), "balance_mon": agent["balance_mon"]})
+                    agent["balance_mon"] = int(agent.get("balance_mon", 0)) + int(amount)
+                    econ["workshop_capacity_left"] = left - 1
+                    log(
+                        "earn",
+                        {
+                            "agent_id": agent["id"],
+                            "amount": int(amount),
+                            "balance_mon": agent["balance_mon"],
+                            "capacity_left": econ["workshop_capacity_left"],
+                        },
+                    )
                     applied_this_tick += 1
 
             elif a_type == "say":
@@ -428,6 +745,8 @@ def metrics():
         "queued_actions": len(world_state["action_queue"]),
         "logs": len(world_state["logs"]),
         "locations": len(world_state["locations"]),
+        "workshop_capacity_per_tick": int(world_state.get("economy", {}).get("workshop_capacity_per_tick", 1)),
+        "workshop_capacity_left": int(world_state.get("economy", {}).get("workshop_capacity_left", 0)),
     }
 
 @app.post("/demo/run")
@@ -466,9 +785,21 @@ def demo_run(steps: int = Query(5, ge=1, le=50)):
 # ============================================================
 
 def _format_event(e: Dict[str, Any]) -> str:
+    if not isinstance(e, dict):
+        return str(e)
     tick_val = e.get("tick")
     event = e.get("event")
-    data = e.get("data", {})
+    data = e.get("data")
+    if not isinstance(data, dict):
+        data = {}
+
+    if event == "entry_denied_missing_tx":
+        return f"tick {tick_val}: entry denied (missing tx) name={data.get('name')}"
+    if event == "entry_verified":
+        return (
+            f"tick {tick_val}: entry verified name={data.get('name')} tx={data.get('tx_hash')} "
+            f"value_wei={data.get('value_wei')} min_fee_wei={data.get('min_fee_wei')} block={data.get('block_number')}"
+        )
 
     if event == "join":
         return (
@@ -479,10 +810,30 @@ def _format_event(e: Dict[str, Any]) -> str:
         return f"tick {tick_val}: queued {data.get('type')} by agent {data.get('agent_id')} payload={data.get('payload')}"
     if event == "move":
         return f"tick {tick_val}: agent {data.get('agent_id')} moved to {data.get('to')}"
+    if event == "move_cost":
+        return (
+            f"tick {tick_val}: agent {data.get('agent_id')} paid move cost {data.get('cost')} "
+            f"(balance={data.get('balance_mon')}) to move to {data.get('to')}"
+        )
+    if event == "move_denied_insufficient_funds":
+        return (
+            f"tick {tick_val}: move denied for agent {data.get('agent_id')} "
+            f"(balance={data.get('balance_mon')}, cost={data.get('cost')}, to={data.get('to')})"
+        )   
     if event == "earn":
-        return f"tick {tick_val}: agent {data.get('agent_id')} earned {data.get('amount')} (balance={data.get('balance_mon')})"
+        cap_left = data.get("capacity_left")
+        extra = f", capacity_left={cap_left}" if cap_left is not None else ""
+        return (
+            f"tick {tick_val}: agent {data.get('agent_id')} earned {data.get('amount')} "
+            f"(balance={data.get('balance_mon')}{extra})"
+        )
     if event == "earn_denied_wrong_location":
         return f"tick {tick_val}: earn denied for agent {data.get('agent_id')} (pos={data.get('pos')})"
+    if event == "earn_denied_capacity":
+        return (
+            f"tick {tick_val}: earn denied for agent {data.get('agent_id')} "
+            f"(reason=capacity, left={data.get('left')}, pos={data.get('pos')})"
+        )
     if event == "say":
         return f"tick {tick_val}: agent {data.get('agent_id')} said '{data.get('text')}' at {data.get('pos')}"
     if event == "scenario_loaded":
@@ -545,7 +896,11 @@ def explain_agent(agent_id: int, limit: int = Query(50, ge=1, le=500)):
 
     filtered = []
     for e in reversed(logs):
+        if not isinstance(e, dict):
+            continue
         d = e.get("data", {})
+        if not isinstance(d, dict):
+            d = {}
         if d.get("agent_id") == agent_id:
             filtered.append(e)
         if len(filtered) >= limit:
@@ -602,6 +957,8 @@ def auto_disable(req: AutoToggleRequest):
 def auto_enable_all():
     count = 0
     for agent in world_state.get("agents", []):
+        if not isinstance(agent, dict):
+            continue
         if agent.get("status") == "active":
             agent["auto"] = True
             count += 1
@@ -612,6 +969,8 @@ def auto_enable_all():
 def auto_disable_all():
     count = 0
     for agent in world_state.get("agents", []):
+        if not isinstance(agent, dict):
+            continue
         if agent.get("auto") is True:
             agent["auto"] = False
             count += 1
@@ -642,62 +1001,151 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     - goal=idle   -> do nothing
     - goal=wander -> move between locations
     - goal=earn   -> ensure workshop then earn(1)
+
+    Economy v2 addition:
+    - if the agent was just denied due to workshop capacity, do ONE wander/move
+      on the next decision to avoid spamming earn and to demonstrate policy reaction.
     """
     tick_now = world_state.get("tick", 0)
     pos = agent.get("pos", "spawn")
     goal: str = agent.get("goal", "earn")
+    bal = int(agent.get("balance_mon", 0))
+
+    # --- Economy v2: react to recent capacity denial (must run BEFORE cooldown gate) ---
+    last_reason = agent.get("last_denied_reason")
+    last_tick = agent.get("last_denied_tick")
+
+    if last_reason == "capacity" and last_tick is not None:
+        # denial was very recent -> do one wander/move even if cooldown is set
+        if tick_now <= int(last_tick) + 1:
+            to = _pick_next_location(pos)
+            # If the agent can't afford a move, do not spam; consume the one-shot reaction.
+            if bal < MOVE_COST_MON:
+                log(
+                    "auto_decision",
+                    {
+                        "agent_id": agent["id"],
+                        "goal": goal,
+                        "reason": "recent capacity denial but insufficient funds for move",
+                        "chosen": None,
+                    },
+                )
+                agent.pop("last_denied_reason", None)
+                agent.pop("last_denied_tick", None)
+                agent["cooldown_until_tick"] = max(int(agent.get("cooldown_until_tick", 0)), tick_now + 1)
+                return None
+            chosen = _queue_action(agent["id"], "move", {"to": to}) if to != pos else None
+            log(
+                "auto_decision",
+                {
+                    "agent_id": agent["id"],
+                    "goal": goal,
+                    "reason": "recent capacity denial -> wander once",
+                    "chosen": chosen,
+                },
+            )
+            # clear flags so this reaction is one-shot
+            agent.pop("last_denied_reason", None)
+            agent.pop("last_denied_tick", None)
+            agent["cooldown_until_tick"] = max(int(agent.get("cooldown_until_tick", 0)), tick_now + 1)
+            return chosen
+
+        # if it's no longer recent, just clear and continue normal logic
+        agent.pop("last_denied_reason", None)
+        agent.pop("last_denied_tick", None)
 
     cooldown_until = int(agent.get("cooldown_until_tick", 0))
     if tick_now < cooldown_until:
-        log("auto_decision", {
-            "agent_id": agent.get("id"),
-            "goal": goal,
-            "reason": f"cooldown (until {cooldown_until})",
-            "chosen": None,
-        })
+        log(
+            "auto_decision",
+            {
+                "agent_id": agent.get("id"),
+                "goal": goal,
+                "reason": f"cooldown (until {cooldown_until})",
+                "chosen": None,
+            },
+        )
         return None
 
     if goal == "idle":
-        log("auto_decision", {
-            "agent_id": agent.get("id"),
-            "goal": goal,
-            "reason": "idle goal -> no action",
-            "chosen": None,
-        })
+        log(
+            "auto_decision",
+            {
+                "agent_id": agent.get("id"),
+                "goal": goal,
+                "reason": "idle goal -> no action",
+                "chosen": None,
+            },
+        )
         agent["cooldown_until_tick"] = tick_now + 1
         return None
 
     if goal == "wander":
+        if bal < MOVE_COST_MON:
+            log(
+                "auto_decision",
+                {
+                    "agent_id": agent.get("id"),
+                    "goal": goal,
+                    "reason": "wander but insufficient funds for move",
+                    "chosen": None,
+                },
+            )
+            agent["cooldown_until_tick"] = tick_now + 1
+            return None
+
         to = _pick_next_location(pos)
         chosen = _queue_action(agent["id"], "move", {"to": to}) if to != pos else None
-        log("auto_decision", {
-            "agent_id": agent.get("id"),
-            "goal": goal,
-            "reason": f"wander -> move {pos} -> {to}",
-            "chosen": chosen,
-        })
+        log(
+            "auto_decision",
+            {
+                "agent_id": agent.get("id"),
+                "goal": goal,
+                "reason": f"wander -> move {pos} -> {to}",
+                "chosen": chosen,
+            },
+        )
         agent["cooldown_until_tick"] = tick_now + 1
         return chosen
 
     # default: earn
     if pos != "workshop":
+        if bal < MOVE_COST_MON:
+            log(
+                "auto_decision",
+                {
+                    "agent_id": agent["id"],
+                    "goal": goal,
+                    "reason": f"not in workshop (pos={pos}) but insufficient funds for move",
+                    "chosen": None,
+                },
+            )
+            agent["cooldown_until_tick"] = tick_now + 1
+            return None
+
         chosen = _queue_action(agent["id"], "move", {"to": "workshop"})
-        log("auto_decision", {
-            "agent_id": agent["id"],
-            "goal": goal,
-            "reason": f"not in workshop (pos={pos})",
-            "chosen": chosen,
-        })
+        log(
+            "auto_decision",
+            {
+                "agent_id": agent["id"],
+                "goal": goal,
+                "reason": f"not in workshop (pos={pos})",
+                "chosen": chosen,
+            },
+        )
         agent["cooldown_until_tick"] = tick_now + 1
         return chosen
 
     chosen = _queue_action(agent["id"], "earn", {"amount": 1})
-    log("auto_decision", {
-        "agent_id": agent["id"],
-        "goal": goal,
-        "reason": "in workshop -> earn",
-        "chosen": chosen,
-    })
+    log(
+        "auto_decision",
+        {
+            "agent_id": agent["id"],
+            "goal": goal,
+            "reason": "in workshop -> earn",
+            "chosen": chosen,
+        },
+    )
     agent["cooldown_until_tick"] = tick_now + 1
     return chosen
 
@@ -708,6 +1156,8 @@ def auto_step_internal(limit_agents: int = 50) -> Dict[str, Any]:
     for agent in world_state.get("agents", []):
         if count >= limit_agents:
             break
+        if not isinstance(agent, dict) or agent.get("id") is None:
+            continue
         if agent.get("auto") is True and agent.get("status") == "active":
             chosen = _auto_policy_for_agent(agent)
             if chosen is not None:
@@ -725,3 +1175,25 @@ def auto_tick(limit_agents: int = Query(50, ge=1, le=500)):
     step_res = auto_step_internal(limit_agents=limit_agents)
     tick_res = tick(steps=1)
     return {"ok": True, "auto": step_res, "tick": tick_res}
+# Debug Monad endpoint
+@app.get("/debug/monad")
+def debug_monad():
+    used = 0
+    try:
+        used_list = world_state.get("entry", {}).get("used_tx_hashes", [])
+        if isinstance(used_list, list):
+            used = len(used_list)
+    except Exception:
+        used = 0
+    return {
+        "ok": True,
+        "cwd": os.getcwd(),
+        "env_path": str(Path(__file__).with_name(".env")),
+        "env_exists": Path(__file__).with_name(".env").exists(),
+        "monad_chain_id": MONAD_CHAIN_ID,
+        "monad_rpc_url": MONAD_RPC_URL,
+        "monad_treasury": MONAD_TREASURY_ADDRESS,
+        "min_entry_fee_wei": _parse_min_fee_wei(),
+        "allow_free_join": ALLOW_FREE_JOIN,
+        "used_entry_txs": used,
+    }

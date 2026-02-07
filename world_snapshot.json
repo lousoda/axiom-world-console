@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "saved_at": 1770484481.106156,
+  "world_state": {
+    "tick": 0,
+    "locations": [
+      "spawn",
+      "market",
+      "workshop"
+    ],
+    "agents": [
+      {
+        "id": 1,
+        "name": "alice",
+        "balance_mon": 0,
+        "pos": "spawn",
+        "status": "active",
+        "inventory": [],
+        "auto": false,
+        "cooldown_until_tick": 0,
+        "goal": "earn",
+        "entry_tx_hash": "0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9",
+        "entry_payer": "0x22534e5e0bcd1063d04491bfda30fb9804283453",
+        "wallet_address": null
+      }
+    ],
+    "action_queue": [],
+    "logs": [
+      {
+        "time": 1770484267.386155,
+        "tick": 0,
+        "event": "persist_save",
+        "data": {
+          "path": "world_snapshot.json",
+          "include_logs": true
+        }
+      },
+      {
+        "time": 1770484274.593973,
+        "tick": 0,
+        "event": "persist_load",
+        "data": {
+          "path": "world_snapshot.json",
+          "saved_at": 1770484267.386176
+        }
+      },
+      {
+        "time": 1770484450.474609,
+        "tick": 0,
+        "event": "entry_verified",
+        "data": {
+          "name": "alice",
+          "tx_hash": "0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9",
+          "from": "0x22534e5e0bcd1063d04491bfda30fb9804283453",
+          "to": "0x833dd2b2c4085674e57b058126dd59235d893a2e",
+          "value_wei": 10000000000000000,
+          "min_fee_wei": 10000000000000000,
+          "block_number": 53849402
+        }
+      },
+      {
+        "time": 1770484450.4746618,
+        "tick": 0,
+        "event": "join",
+        "data": {
+          "agent_id": 1,
+          "name": "alice",
+          "deposit_mon": 0
+        }
+      },
+      {
+        "time": 1770484481.106133,
+        "tick": 0,
+        "event": "persist_save",
+        "data": {
+          "path": "world_snapshot.json",
+          "include_logs": true
+        }
+      }
+    ],
+    "economy": {
+      "workshop_capacity_per_tick": 1,
+      "workshop_capacity_left": 1
+    },
+    "entry": {
+      "used_tx_hashes": [
+        "0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9"
+      ]
+    }
+  }
+}
