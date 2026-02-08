@@ -442,29 +442,92 @@ def _parse_min_fee_wei() -> int:
 
 
 def _rpc_call(method: str, params: list) -> Any:
+    """JSON-RPC helper with explicit timeouts and stable error mapping.
+
+    Error mapping:
+    - 503: network/timeout (RPC unreachable / slow)
+    - 502: RPC returned bad/invalid response (HTTP error, invalid JSON, JSON-RPC error)
+
+    NOTE: This function MUST NOT raise raw requests/json exceptions; only HTTPException.
+    """
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-    last_err = None
+
+    # Keep RPC behavior deterministic and fast-failing for demos.
+    # Tuple = (connect_timeout, read_timeout)
+    timeout = (3, 10)
+
+    last_err: Optional[Exception] = None
+
     for attempt in range(2):
         try:
-            r = requests.post(MONAD_RPC_URL, json=payload, timeout=10)
-            r.raise_for_status()
-            data = r.json()
-            break
-        except Exception as e:
+            r = requests.post(MONAD_RPC_URL, json=payload, timeout=timeout)
+        except (requests.exceptions.Timeout,) as e:
             last_err = e
             if attempt == 0:
                 continue
-            raise HTTPException(status_code=502, detail=f"Monad RPC error: {e}")
-    else:
-        raise HTTPException(status_code=502, detail=f"Monad RPC error: {last_err}")
+            log("monad_rpc_error", {"method": method, "reason": "rpc_timeout"})
+            raise HTTPException(status_code=503, detail="Monad RPC timeout")
+        except (requests.exceptions.ConnectionError,) as e:
+            last_err = e
+            if attempt == 0:
+                continue
+            log("monad_rpc_error", {"method": method, "reason": "rpc_unreachable"})
+            raise HTTPException(status_code=503, detail="Monad RPC unreachable")
+        except requests.exceptions.RequestException as e:
+            # Other request-layer errors
+            last_err = e
+            if attempt == 0:
+                continue
+            log("monad_rpc_error", {"method": method, "reason": "rpc_request_error"})
+            raise HTTPException(status_code=502, detail=f"Monad RPC request error: {e}")
 
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Monad RPC returned non-JSON response")
+        # HTTP-level errors
+        try:
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            last_err = e
+            if attempt == 0:
+                continue
+            log("monad_rpc_error", {"method": method, "reason": "rpc_http_error", "status": getattr(r, "status_code", None)})
+            raise HTTPException(status_code=502, detail=f"Monad RPC HTTP error: {e}")
 
-    if data.get("error"):
-        raise HTTPException(status_code=502, detail=f"Monad RPC error: {data.get('error')}")
+        # Parse JSON
+        try:
+            data = r.json()
+        except ValueError as e:
+            last_err = e
+            if attempt == 0:
+                continue
+            log("monad_rpc_error", {"method": method, "reason": "rpc_bad_json"})
+            raise HTTPException(status_code=502, detail="Monad RPC returned invalid JSON")
 
-    return data.get("result")
+        if not isinstance(data, dict):
+            last_err = Exception("non_object_json")
+            if attempt == 0:
+                continue
+            log("monad_rpc_error", {"method": method, "reason": "rpc_non_object_json"})
+            raise HTTPException(status_code=502, detail="Monad RPC returned non-object JSON")
+
+        # JSON-RPC error object
+        if data.get("error"):
+            err_obj = data.get("error")
+            # Keep detail stable and short; do not dump entire objects.
+            code = None
+            msg = None
+            if isinstance(err_obj, dict):
+                code = err_obj.get("code")
+                msg = err_obj.get("message")
+            log("monad_rpc_error", {"method": method, "reason": "rpc_error_object", "code": code})
+            if msg:
+                raise HTTPException(status_code=502, detail=f"Monad RPC error: {msg}")
+            raise HTTPException(status_code=502, detail="Monad RPC error")
+
+        # Normal success
+        return data.get("result")
+
+    # Should not happen, but keep a stable failure mode.
+    log("monad_rpc_error", {"method": method, "reason": "rpc_unknown", "error": str(last_err) if last_err else None})
+    raise HTTPException(status_code=502, detail="Monad RPC error")
 
 
 def _hex_to_int(x: Any) -> int:
