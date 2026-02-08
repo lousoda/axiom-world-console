@@ -23,3 +23,7 @@ __pycache__/
 # Temporary files
 *.tmp
 ARTIFACTS/
+
+# Runtime artifacts
+world_snapshot.json
+ARTIFACTS/
