@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${1:-$ROOT_DIR/.env.demo.local}"
+USER_ENV_ARG="${1:-}"
+ENV_FILE="${USER_ENV_ARG:-$ROOT_DIR/.env.demo.local}"
 BASE_URL="${2:-${DEMO_BASE_URL:-http://127.0.0.1:8011}}"
 
 log() {
@@ -14,7 +15,15 @@ fail() {
   exit 1
 }
 
-[ -f "$ENV_FILE" ] || fail "Env file not found: $ENV_FILE"
+if [ ! -f "$ENV_FILE" ]; then
+  # If caller didn't explicitly pass an env file, allow a safe fallback to repo-root .env
+  if [ -z "$USER_ENV_ARG" ] && [ -f "$ROOT_DIR/.env" ]; then
+    log "WARN: Env file not found: $ENV_FILE; falling back to $ROOT_DIR/.env"
+    ENV_FILE="$ROOT_DIR/.env"
+  else
+    fail "Env file not found: $ENV_FILE"
+  fi
+fi
 
 set -a
 # shellcheck disable=SC1090
