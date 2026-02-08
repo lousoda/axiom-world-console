@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, Header, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Literal, Dict, Any, Optional, List
 import time
 import os
 import json
 import inspect
+from threading import Lock
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
@@ -16,6 +18,8 @@ import requests
 # =============================
 MAX_LOGS = 5000
 MOVE_COST_MON = 1
+MARKET_ITEM_PRICE_MON = 2
+MARKET_DEFAULT_ITEM = "scrap"
 
 app = FastAPI(title="World Model Agent (MVP)")
 
@@ -41,11 +45,141 @@ def make_initial_world_state() -> Dict[str, Any]:
 
 world_state: Dict[str, Any] = make_initial_world_state()
 
-def reset_in_place() -> None:
+def reset_in_place(preserve_used_tx_hashes: bool = False) -> None:
     """Очищає state без заміни dict-об’єкта (менше сюрпризів)."""
+    preserved_hashes: List[str] = []
+    if preserve_used_tx_hashes:
+        entry = world_state.get("entry", {})
+        used = entry.get("used_tx_hashes", []) if isinstance(entry, dict) else []
+        seen = set()
+        for h in used if isinstance(used, list) else []:
+            if not isinstance(h, str):
+                continue
+            hh = h.strip().lower()
+            if not hh.startswith("0x") or len(hh) < 10:
+                continue
+            if hh in seen:
+                continue
+            seen.add(hh)
+            preserved_hashes.append(hh)
+
     fresh = make_initial_world_state()
     world_state.clear()
     world_state.update(fresh)
+
+    if preserve_used_tx_hashes and preserved_hashes:
+        entry = world_state.setdefault("entry", {})
+        if not isinstance(entry, dict):
+            entry = {}
+            world_state["entry"] = entry
+        entry["used_tx_hashes"] = preserved_hashes
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+def _to_non_negative_int(value: Any, default: int = 0) -> int:
+    parsed = _to_int(value, default)
+    return parsed if parsed >= 0 else default
+
+def _next_agent_id() -> int:
+    max_id = 0
+    for a in world_state.get("agents", []):
+        if not isinstance(a, dict):
+            continue
+        aid = _to_int(a.get("id"), 0)
+        if aid > max_id:
+            max_id = aid
+    return max_id + 1
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+def _env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        value = default
+    else:
+        try:
+            value = int(str(raw).strip(), 10)
+        except (TypeError, ValueError):
+            value = default
+    if min_value is not None and value < min_value:
+        return default
+    return value
+
+DEBUG_ENDPOINTS_ENABLED = _env_bool("DEBUG_ENDPOINTS_ENABLED", True)
+REQUIRE_API_KEY = _env_bool("REQUIRE_API_KEY", False)
+API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-API-Key").strip() or "X-API-Key"
+WORLD_API_KEY = os.getenv("WORLD_API_KEY", "").strip()
+
+RATE_LIMIT_ENABLED = _env_bool("RATE_LIMIT_ENABLED", False)
+RATE_LIMIT_MAX_REQUESTS = _to_non_negative_int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "60"), 60)
+RATE_LIMIT_WINDOW_SEC = _to_non_negative_int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"), 60)
+if RATE_LIMIT_MAX_REQUESTS <= 0:
+    RATE_LIMIT_MAX_REQUESTS = 60
+if RATE_LIMIT_WINDOW_SEC <= 0:
+    RATE_LIMIT_WINDOW_SEC = 60
+
+_RATE_LIMIT_BUCKETS: Dict[str, List[float]] = {}
+_RATE_LIMIT_LOCK = Lock()
+
+def _is_mutating_request(request: Request) -> bool:
+    return request.method.upper() == "POST"
+
+def _check_rate_limit(client_key: str) -> Optional[int]:
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW_SEC
+
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS.setdefault(client_key, [])
+        while bucket and bucket[0] < cutoff:
+            del bucket[0]
+
+        if len(bucket) >= RATE_LIMIT_MAX_REQUESTS:
+            retry_after = int(max(1, RATE_LIMIT_WINDOW_SEC - (now - bucket[0])))
+            return retry_after
+
+        bucket.append(now)
+
+    return None
+
+def _assert_debug_enabled() -> None:
+    if not DEBUG_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
+@app.middleware("http")
+async def security_guard(request: Request, call_next):
+    if _is_mutating_request(request):
+        if REQUIRE_API_KEY:
+            if not WORLD_API_KEY:
+                return JSONResponse(
+                    status_code=500,
+                    content={"detail": "Server misconfigured: WORLD_API_KEY is required when REQUIRE_API_KEY=true"},
+                )
+            got = request.headers.get(API_KEY_HEADER_NAME, "")
+            if got != WORLD_API_KEY:
+                return JSONResponse(status_code=401, content={"detail": f"Missing or invalid {API_KEY_HEADER_NAME}"})
+
+        if RATE_LIMIT_ENABLED:
+            client_key = "unknown"
+            if request.client and request.client.host:
+                client_key = request.client.host
+
+            retry_after = _check_rate_limit(client_key)
+            if retry_after is not None:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded"},
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+    return await call_next(request)
 
 def log(event: str, data: Dict[str, Any]) -> None:
     logs = world_state.setdefault("logs", [])
@@ -127,8 +261,7 @@ def _normalize_loaded_state(loaded: Dict[str, Any]) -> Dict[str, Any]:
         if k in loaded:
             base[k] = loaded[k]
 
-    if not isinstance(base["tick"], int):
-        base["tick"] = int(base["tick"]) if str(base["tick"]).isdigit() else 0
+    base["tick"] = _to_non_negative_int(base.get("tick", 0), 0)
 
     if not isinstance(base["locations"], list):
         base["locations"] = ["spawn", "market", "workshop"]
@@ -145,11 +278,12 @@ def _normalize_loaded_state(loaded: Dict[str, Any]) -> Dict[str, Any]:
     # Economy defaults (for older snapshots)
     if not isinstance(base.get("economy"), dict):
         base["economy"] = {}
-    base["economy"].setdefault("workshop_capacity_per_tick", 1)
-    base["economy"].setdefault(
-        "workshop_capacity_left",
-        base["economy"]["workshop_capacity_per_tick"],
-    )
+    cap_per_tick = _to_non_negative_int(base["economy"].get("workshop_capacity_per_tick", 1), 1)
+    if cap_per_tick <= 0:
+        cap_per_tick = 1
+    cap_left = _to_non_negative_int(base["economy"].get("workshop_capacity_left", cap_per_tick), cap_per_tick)
+    base["economy"]["workshop_capacity_per_tick"] = cap_per_tick
+    base["economy"]["workshop_capacity_left"] = cap_left
 
     # Entry defaults (for older snapshots)
     if not isinstance(base.get("entry"), dict):
@@ -169,14 +303,24 @@ def _normalize_loaded_state(loaded: Dict[str, Any]) -> Dict[str, Any]:
     allowed_goals = {"earn", "wander", "idle"}
     valid_agents: List[Dict[str, Any]] = []
     for a in base["agents"]:
-        if not isinstance(a, dict) or a.get("id") is None:
+        if not isinstance(a, dict):
             continue
+        aid = _to_int(a.get("id"), 0)
+        if aid <= 0:
+            continue
+        a["id"] = aid
         a.setdefault("pos", "spawn")
-        a.setdefault("balance_mon", 0)
+        if not isinstance(a.get("pos"), str):
+            a["pos"] = "spawn"
+        a["balance_mon"] = _to_non_negative_int(a.get("balance_mon", 0), 0)
         a.setdefault("status", "active")
+        if not isinstance(a.get("status"), str):
+            a["status"] = "active"
         a.setdefault("inventory", [])
-        a.setdefault("auto", False)
-        a.setdefault("cooldown_until_tick", 0)
+        if not isinstance(a.get("inventory"), list):
+            a["inventory"] = []
+        a["auto"] = bool(a.get("auto", False))
+        a["cooldown_until_tick"] = _to_non_negative_int(a.get("cooldown_until_tick", 0), 0)
         a.setdefault("goal", "earn")
         if a.get("goal") not in allowed_goals:
             a["goal"] = "earn"
@@ -190,8 +334,17 @@ def load_world_state(path: Optional[str] = None) -> dict:
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"Snapshot not found: {p}")
 
-    raw = p.read_text(encoding="utf-8")
-    data = json.loads(raw)
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Snapshot read error: {e}")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Snapshot JSON is invalid")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Snapshot root JSON must be an object")
 
     if data.get("schema_version") != 1:
         raise HTTPException(status_code=400, detail="Unsupported snapshot schema_version")
@@ -258,7 +411,7 @@ def persist_load(req: PersistLoadRequest = Body(default=PersistLoadRequest())):
 # MONAD MAINNET (token-gated entry)
 # ============================================================
 
-MONAD_CHAIN_ID = int(os.getenv("MONAD_CHAIN_ID", "143"))
+MONAD_CHAIN_ID = _env_int("MONAD_CHAIN_ID", 143, min_value=1)
 MONAD_RPC_URL = os.getenv("MONAD_RPC_URL", "https://rpc.monad.xyz")
 MONAD_TREASURY_ADDRESS = os.getenv("MONAD_TREASURY_ADDRESS", "").strip()
 
@@ -401,6 +554,7 @@ def root():
 # Debug endpoints
 @app.get("/debug/info")
 def debug_info():
+    _assert_debug_enabled()
     return {
         "pid": os.getpid(),
         "cwd": os.getcwd(),
@@ -412,6 +566,7 @@ def debug_info():
 # Debug endpoint to show which file and version of _auto_policy_for_agent is running
 @app.get("/debug/source")
 def debug_source():
+    _assert_debug_enabled()
     # Prove which file uvicorn actually imported, and show whether the autopolicy includes the funds-guard text.
     try:
         src = inspect.getsource(_auto_policy_for_agent)
@@ -435,6 +590,7 @@ def debug_source():
 
 @app.get("/debug/routes")
 def debug_routes():
+    _assert_debug_enabled()
     routes = []
     for r in app.routes:
         path = getattr(r, "path", None)
@@ -475,8 +631,8 @@ def get_agent(agent_id: int):
 class JoinRequest(BaseModel):
     name: str = Field(min_length=1, max_length=32)
     deposit_mon: int = Field(default=0, ge=0)
-    entry_tx_hash: Optional[str] = None
-    wallet_address: Optional[str] = None
+    entry_tx_hash: Optional[str] = Field(default=None, pattern=r"^0x[a-fA-F0-9]{64}$")
+    wallet_address: Optional[str] = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
 
 @app.post("/join")
 def join(req: JoinRequest):
@@ -510,7 +666,7 @@ def join(req: JoinRequest):
         )
 
     agent = {
-        "id": len(world_state["agents"]) + 1,
+        "id": _next_agent_id(),
         "name": req.name,
         "balance_mon": req.deposit_mon,
         "pos": "spawn",
@@ -543,7 +699,7 @@ def join(req: JoinRequest):
 # ACTION
 # ============================================================
 
-ActionType = Literal["move", "earn", "say"]
+ActionType = Literal["move", "earn", "say", "transfer"]
 
 class ActRequest(BaseModel):
     agent_id: int
@@ -576,6 +732,18 @@ def act(req: ActRequest):
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(status_code=400, detail="say.text must be non-empty string")
 
+    elif req.type == "transfer":
+        to_agent_id = payload.get("to_agent_id")
+        amount = payload.get("amount")
+        if not isinstance(to_agent_id, int) or to_agent_id <= 0:
+            raise HTTPException(status_code=400, detail="transfer.to_agent_id must be positive int")
+        if not isinstance(amount, int) or amount <= 0:
+            raise HTTPException(status_code=400, detail="transfer.amount must be positive int")
+        if to_agent_id == req.agent_id:
+            raise HTTPException(status_code=400, detail="transfer.to_agent_id must be different from agent_id")
+        # Validate receiver exists early for better UX
+        _ = find_agent(to_agent_id)
+
     action = {
         "queued_at_tick": world_state["tick"],
         "agent_id": req.agent_id,
@@ -588,11 +756,114 @@ def act(req: ActRequest):
     return {"ok": True, "queued": action}
 
 # ============================================================
+# MARKET (x402-style economy)
+# ============================================================
+
+class MarketBuyRequest(BaseModel):
+    agent_id: int
+    item: str = Field(default=MARKET_DEFAULT_ITEM, min_length=1, max_length=32)
+    qty: int = Field(default=1, ge=1, le=100)
+
+
+@app.post("/market/buy")
+def market_buy(req: MarketBuyRequest, payment_proof: Optional[str] = Header(default=None, alias="X-Payment-Proof")):
+    agent = find_agent(req.agent_id)
+
+    if agent.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Agent not active")
+
+    if agent.get("pos") != "market":
+        raise HTTPException(status_code=400, detail="Agent must be in market to buy")
+
+    qty = int(req.qty)
+    price = int(MARKET_ITEM_PRICE_MON) * qty
+    bal = int(agent.get("balance_mon", 0))
+
+    if bal < price:
+        treasury = (os.getenv("MARKET_TREASURY_ADDRESS", "") or MONAD_TREASURY_ADDRESS or "").strip()
+        # x402-style: 402 + machine-readable payment instructions
+        instructions = {
+            "protocol": "x402-lite",
+            "network": "monad-mainnet",
+            "currency": "MON",
+            "amount_mon": price,
+            "treasury": treasury,
+            "reason": "insufficient_funds",
+            "retry": {
+                "method": "POST",
+                "path": "/market/buy",
+                "header": "X-Payment-Proof",
+                "note": "Attach a payment proof (e.g., tx hash) in X-Payment-Proof and retry.",
+            },
+        }
+
+        log(
+            "buy_denied_insufficient_funds",
+            {
+                "agent_id": agent.get("id"),
+                "item": req.item,
+                "qty": qty,
+                "price": price,
+                "balance_mon": bal,
+                "x402": instructions,
+            },
+        )
+
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "message": "Payment required: insufficient funds to buy",
+                "payment": instructions,
+            },
+        )
+
+    agent["balance_mon"] = bal - price
+    inv = agent.get("inventory")
+    if not isinstance(inv, list):
+        inv = []
+        agent["inventory"] = inv
+    for _ in range(qty):
+        inv.append(req.item)
+
+    log(
+        "buy",
+        {
+            "agent_id": agent.get("id"),
+            "item": req.item,
+            "qty": qty,
+            "price": price,
+            "balance_mon": agent["balance_mon"],
+        },
+    )
+
+    if payment_proof and isinstance(payment_proof, str) and payment_proof.strip():
+        log(
+            "buy_payment_proof_seen",
+            {
+                "agent_id": agent.get("id"),
+                "item": req.item,
+                "qty": qty,
+                "proof": payment_proof.strip()[:120],
+            },
+        )
+
+    return {
+        "ok": True,
+        "agent_id": agent.get("id"),
+        "item": req.item,
+        "qty": qty,
+        "price": price,
+        "balance_mon": agent["balance_mon"],
+        "inventory_size": len(inv),
+    }
+
+# ============================================================
 # TICK
 # ============================================================
 
 @app.post("/tick")
 def tick(steps: int = Query(1, ge=1, le=100)):
+    world_state["tick"] = _to_non_negative_int(world_state.get("tick", 0), 0)
     applied_total = 0
 
     for _ in range(steps):
@@ -603,7 +874,9 @@ def tick(steps: int = Query(1, ge=1, le=100)):
         if not isinstance(econ, dict):
             econ = {}
             world_state["economy"] = econ
-        cap_per_tick = int(econ.get("workshop_capacity_per_tick", 1))
+        cap_per_tick = _to_non_negative_int(econ.get("workshop_capacity_per_tick", 1), 1)
+        if cap_per_tick <= 0:
+            cap_per_tick = 1
         econ["workshop_capacity_left"] = cap_per_tick
 
         queue = world_state.get("action_queue", [])
@@ -643,7 +916,7 @@ def tick(steps: int = Query(1, ge=1, le=100)):
 
                 # Economy v2 sink: moving costs 1 MON
                 cost = MOVE_COST_MON
-                bal = int(agent.get("balance_mon", 0))
+                bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
                 if bal < cost:
                     log(
                         "move_denied_insufficient_funds",
@@ -666,24 +939,27 @@ def tick(steps: int = Query(1, ge=1, le=100)):
                     log("earn_denied_wrong_location", {"agent_id": agent["id"], "pos": agent["pos"]})
                 else:
                     # Economy v2: workshop capacity constraint per tick
-                    left = int(econ.get("workshop_capacity_left", 0))
+                    left = _to_non_negative_int(econ.get("workshop_capacity_left", 0), 0)
                     if left <= 0:
                         log("earn_denied_capacity", {"agent_id": agent["id"], "pos": agent["pos"], "left": left})
                         penalty_until = world_state["tick"] + 2  
-                        agent["cooldown_until_tick"] = max(int(agent.get("cooldown_until_tick", 0)), penalty_until)
+                        agent["cooldown_until_tick"] = max(_to_non_negative_int(agent.get("cooldown_until_tick", 0), 0), penalty_until)
                         log("cooldown_penalty", {"agent_id": agent["id"], "until": agent["cooldown_until_tick"], "reason": "capacity"})
                         agent["last_denied_reason"] = "capacity"
                         agent["last_denied_tick"] = world_state["tick"]
                         continue
 
-                    amount = payload.get("amount", 1)
-                    agent["balance_mon"] = int(agent.get("balance_mon", 0)) + int(amount)
+                    amount = _to_int(payload.get("amount", 1), 0)
+                    if amount <= 0:
+                        log("earn_denied_invalid_amount", {"agent_id": agent["id"], "amount": payload.get("amount")})
+                        continue
+                    agent["balance_mon"] = _to_non_negative_int(agent.get("balance_mon", 0), 0) + amount
                     econ["workshop_capacity_left"] = left - 1
                     log(
                         "earn",
                         {
                             "agent_id": agent["id"],
-                            "amount": int(amount),
+                            "amount": amount,
                             "balance_mon": agent["balance_mon"],
                             "capacity_left": econ["workshop_capacity_left"],
                         },
@@ -692,6 +968,54 @@ def tick(steps: int = Query(1, ge=1, le=100)):
 
             elif a_type == "say":
                 log("say", {"agent_id": agent["id"], "text": payload.get("text", ""), "pos": agent["pos"]})
+                applied_this_tick += 1
+
+            elif a_type == "transfer":
+                to_agent_id = payload.get("to_agent_id")
+                amount = payload.get("amount")
+
+                if not isinstance(to_agent_id, int) or to_agent_id <= 0:
+                    log("transfer_denied_invalid_target", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id})
+                    continue
+                if not isinstance(amount, int) or amount <= 0:
+                    log("transfer_denied_invalid_amount", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
+                    continue
+                if to_agent_id == agent.get("id"):
+                    log("transfer_denied_same_agent", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
+                    continue
+
+                try:
+                    receiver = find_agent(int(to_agent_id))
+                except HTTPException:
+                    log("transfer_denied_unknown_target", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
+                    continue
+
+                sender_bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
+                if sender_bal < int(amount):
+                    log(
+                        "transfer_denied_insufficient_funds",
+                        {
+                            "agent_id": agent.get("id"),
+                            "to_agent_id": int(to_agent_id),
+                            "amount": int(amount),
+                            "balance_mon": sender_bal,
+                        },
+                    )
+                    continue
+
+                agent["balance_mon"] = sender_bal - int(amount)
+                receiver["balance_mon"] = _to_non_negative_int(receiver.get("balance_mon", 0), 0) + int(amount)
+
+                log(
+                    "transfer",
+                    {
+                        "agent_id": agent.get("id"),
+                        "to_agent_id": int(to_agent_id),
+                        "amount": int(amount),
+                        "sender_balance_mon": agent["balance_mon"],
+                        "receiver_balance_mon": receiver["balance_mon"],
+                    },
+                )
                 applied_this_tick += 1
 
         applied_total += applied_this_tick
@@ -705,9 +1029,10 @@ def tick(steps: int = Query(1, ge=1, le=100)):
 
 @app.post("/reset")
 def reset():
-    reset_in_place()
+    reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
     log("reset", {"ok": True})
     return {"ok": True, "tick": world_state["tick"]}
+
 
 @app.post("/scenario/basic")
 def scenario_basic():
@@ -721,7 +1046,7 @@ def scenario_basic():
 
     for a in agents:
         agent = {
-            "id": len(world_state["agents"]) + 1,
+            "id": _next_agent_id(),
             "name": a["name"],
             "balance_mon": a["deposit_mon"],
             "pos": "spawn",
@@ -737,16 +1062,52 @@ def scenario_basic():
     log("scenario_loaded", {"name": "basic", "agents": len(world_state["agents"])})
     return {"ok": True, "scenario": "basic", "agents": world_state["agents"]}
 
+# === Inserted new auto-enabled scenario endpoint ===
+@app.post("/scenario/basic_auto")
+def scenario_basic_auto():
+    """Load the basic scenario and enable autonomy by default (demo-friendly)."""
+    reset_in_place()
+
+    agents = [
+        {"name": "alice", "deposit_mon": 10, "goal": "earn", "auto": True},
+        {"name": "bob", "deposit_mon": 2, "goal": "wander", "auto": True},
+        {"name": "charlie", "deposit_mon": 0, "goal": "earn", "auto": True},
+    ]
+
+    for a in agents:
+        agent = {
+            "id": _next_agent_id(),
+            "name": a["name"],
+            "balance_mon": a["deposit_mon"],
+            "pos": "spawn",
+            "status": "active",
+            "inventory": [],
+            "auto": bool(a.get("auto", False)),
+            "cooldown_until_tick": 0,
+            "goal": a.get("goal", "earn"),
+        }
+        world_state["agents"].append(agent)
+        log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
+        if agent["auto"]:
+            log("auto_enabled", {"agent_id": agent["id"]})
+        log("goal_set", {"agent_id": agent["id"], "goal": agent["goal"]})
+
+    log("scenario_loaded", {"name": "basic_auto", "agents": len(world_state["agents"])})
+    return {"ok": True, "scenario": "basic_auto", "agents": world_state["agents"]}
+
 @app.get("/metrics")
 def metrics():
+    econ = world_state.get("economy", {})
+    if not isinstance(econ, dict):
+        econ = {}
     return {
         "tick": world_state["tick"],
         "agents": len(world_state["agents"]),
         "queued_actions": len(world_state["action_queue"]),
         "logs": len(world_state["logs"]),
         "locations": len(world_state["locations"]),
-        "workshop_capacity_per_tick": int(world_state.get("economy", {}).get("workshop_capacity_per_tick", 1)),
-        "workshop_capacity_left": int(world_state.get("economy", {}).get("workshop_capacity_left", 0)),
+        "workshop_capacity_per_tick": _to_non_negative_int(econ.get("workshop_capacity_per_tick", 1), 1),
+        "workshop_capacity_left": _to_non_negative_int(econ.get("workshop_capacity_left", 0), 0),
     }
 
 @app.post("/demo/run")
@@ -836,6 +1197,40 @@ def _format_event(e: Dict[str, Any]) -> str:
         )
     if event == "say":
         return f"tick {tick_val}: agent {data.get('agent_id')} said '{data.get('text')}' at {data.get('pos')}"
+    if event == "transfer":
+        return (
+            f"tick {tick_val}: agent {data.get('agent_id')} transferred {data.get('amount')} to agent {data.get('to_agent_id')} "
+            f"(sender_balance={data.get('sender_balance_mon')}, receiver_balance={data.get('receiver_balance_mon')})"
+        )
+    if event == "transfer_denied_insufficient_funds":
+        return (
+            f"tick {tick_val}: transfer denied for agent {data.get('agent_id')} -> {data.get('to_agent_id')} "
+            f"amount={data.get('amount')} (balance={data.get('balance_mon')})"
+        )
+    if event == "transfer_denied_unknown_target":
+        return f"tick {tick_val}: transfer denied for agent {data.get('agent_id')} (unknown target {data.get('to_agent_id')}, amount={data.get('amount')})"
+    if event == "transfer_denied_invalid_target":
+        return f"tick {tick_val}: transfer denied for agent {data.get('agent_id')} (invalid target {data.get('to_agent_id')})"
+    if event == "transfer_denied_invalid_amount":
+        return f"tick {tick_val}: transfer denied for agent {data.get('agent_id')} -> {data.get('to_agent_id')} (invalid amount {data.get('amount')})"
+    if event == "transfer_denied_same_agent":
+        return f"tick {tick_val}: transfer denied for agent {data.get('agent_id')} (cannot transfer to self)"
+
+    if event == "buy":
+        return (
+            f"tick {tick_val}: agent {data.get('agent_id')} bought {data.get('qty')}x {data.get('item')} "
+            f"for {data.get('price')} (balance={data.get('balance_mon')})"
+        )
+    if event == "buy_denied_insufficient_funds":
+        return (
+            f"tick {tick_val}: buy denied for agent {data.get('agent_id')} "
+            f"item={data.get('item')} qty={data.get('qty')} price={data.get('price')} (balance={data.get('balance_mon')})"
+        )
+    if event == "buy_payment_proof_seen":
+        return (
+            f"tick {tick_val}: buy retry included X-Payment-Proof for agent {data.get('agent_id')} "
+            f"item={data.get('item')} qty={data.get('qty')}"
+        )
     if event == "scenario_loaded":
         return f"tick {tick_val}: scenario loaded: {data.get('name')} (agents={data.get('agents')})"
     if event == "reset":
@@ -1006,10 +1401,10 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     - if the agent was just denied due to workshop capacity, do ONE wander/move
       on the next decision to avoid spamming earn and to demonstrate policy reaction.
     """
-    tick_now = world_state.get("tick", 0)
+    tick_now = _to_non_negative_int(world_state.get("tick", 0), 0)
     pos = agent.get("pos", "spawn")
     goal: str = agent.get("goal", "earn")
-    bal = int(agent.get("balance_mon", 0))
+    bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
 
     # --- Economy v2: react to recent capacity denial (must run BEFORE cooldown gate) ---
     last_reason = agent.get("last_denied_reason")
@@ -1017,7 +1412,7 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     if last_reason == "capacity" and last_tick is not None:
         # denial was very recent -> do one wander/move even if cooldown is set
-        if tick_now <= int(last_tick) + 1:
+        if tick_now <= _to_non_negative_int(last_tick, 0) + 1:
             to = _pick_next_location(pos)
             # If the agent can't afford a move, do not spam; consume the one-shot reaction.
             if bal < MOVE_COST_MON:
@@ -1032,7 +1427,7 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 )
                 agent.pop("last_denied_reason", None)
                 agent.pop("last_denied_tick", None)
-                agent["cooldown_until_tick"] = max(int(agent.get("cooldown_until_tick", 0)), tick_now + 1)
+                agent["cooldown_until_tick"] = max(_to_non_negative_int(agent.get("cooldown_until_tick", 0), 0), tick_now + 1)
                 return None
             chosen = _queue_action(agent["id"], "move", {"to": to}) if to != pos else None
             log(
@@ -1047,14 +1442,14 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             # clear flags so this reaction is one-shot
             agent.pop("last_denied_reason", None)
             agent.pop("last_denied_tick", None)
-            agent["cooldown_until_tick"] = max(int(agent.get("cooldown_until_tick", 0)), tick_now + 1)
+            agent["cooldown_until_tick"] = max(_to_non_negative_int(agent.get("cooldown_until_tick", 0), 0), tick_now + 1)
             return chosen
 
         # if it's no longer recent, just clear and continue normal logic
         agent.pop("last_denied_reason", None)
         agent.pop("last_denied_tick", None)
 
-    cooldown_until = int(agent.get("cooldown_until_tick", 0))
+    cooldown_until = _to_non_negative_int(agent.get("cooldown_until_tick", 0), 0)
     if tick_now < cooldown_until:
         log(
             "auto_decision",
@@ -1173,11 +1568,17 @@ def auto_step(limit_agents: int = Query(50, ge=1, le=500)):
 @app.post("/auto/tick")
 def auto_tick(limit_agents: int = Query(50, ge=1, le=500)):
     step_res = auto_step_internal(limit_agents=limit_agents)
+
+    # If no autonomous actions were generated, explicitly log world idle
+    if isinstance(step_res, dict) and step_res.get("n", 0) == 0:
+        log("world_idle", {"tick": world_state.get("tick", 0)})
+
     tick_res = tick(steps=1)
     return {"ok": True, "auto": step_res, "tick": tick_res}
 # Debug Monad endpoint
 @app.get("/debug/monad")
 def debug_monad():
+    _assert_debug_enabled()
     used = 0
     try:
         used_list = world_state.get("entry", {}).get("used_tx_hashes", [])

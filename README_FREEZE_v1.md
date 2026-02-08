@@ -1,189 +1,173 @@
-# AXIOM — World Model Agent (MVP)
+# World Model Agent — MVP Freeze v1
 
-AXIOM is a deterministic world simulation server: an explicit world state, tick-based execution, and rule-driven autonomy.
-
-Built for the **Moltiverse Hackathon (Agent Track)**. Includes verified **Monad mainnet token‑gated entry**.
+Built for the **Moltiverse Hackathon (Agent Track)**.
 
 Status: **MVP Freeze v1 (stable)**  
+> This document represents the frozen v1 state used for submission. Active development may continue in `README.md` (if present).
 
 ---
 
-## Monad Mainnet Integration (Verified)
+## Overview
 
-This MVP includes a minimal, production‑valid integration with **Monad mainnet** to satisfy the Agent Track on‑chain requirement.
+**World Model Agent** is a stateful multi-agent simulation exposed via a FastAPI backend. Agents operate inside a deterministic world model with explicit time steps, shared constraints, persistence, and explainability.
 
-**What is implemented:**
-- MON token‑gated world entry
-- On‑chain payment proof via transaction hash
-- Anti‑replay protection (tx hash cannot be reused)
-- Persistence‑safe verification (replay protection survives save/load)
+The project demonstrates:
+- Multi-agent world state
+- Autonomous agent behavior (goal-driven)
+- Persistent simulation snapshots
+- Explainable decision traces
+- **Real Monad mainnet token-gated entry** (transaction-hash verification)
 
-**Network:** Monad Mainnet (chainId `143`)
-
-**Treasury:** `0x833dD2b2c4085674E57B058126DD59235D893a2e`
-
-**Minimum entry fee:** `0.01 MON`
-
-**Example proof transaction:**
-`0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9`
-
-Verification is visible via:
-- `GET /debug/monad`
-- `GET /explain/recent`
+On-chain logic is intentionally minimal: the blockchain is used as a **proof-of-entry mechanism**, while the world simulation runs off-chain for determinism and auditability.
 
 ---
 
-## What it does
+## Requirements
 
-AXIOM exposes its world state (tick, locations, agents, logs, action queue) so external clients/agents can:
-- enter the world (`/join`, `/scenario/basic`)
-- query state (`/world`, `/agents/{id}`, `/metrics`)
-- submit actions (`/act`)
-
-World changes via discrete ticks (`/tick`).
+- Python **3.9+**
+- macOS / Linux (Windows via WSL is fine)
 
 ---
 
-## Autonomy v1
+## Setup
 
-Actions:
-- **earn** — go to workshop and earn
-- **wander** — move around locations
-- **idle** — no action
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install fastapi uvicorn pydantic requests python-dotenv
+```
 
-Cooldown prevents decision spam (at most one decision per tick per agent).
+---
 
-Explainability:
-- `GET /explain/recent`
-- `GET /explain/agent/{id}`  
-These endpoints show *why* actions happened.
+## Run the Server
+
+```bash
+python3 -m uvicorn app:app --host 127.0.0.1 --port 8001 --workers 1
+```
+
+If the server is running, you should be able to access:
+- API root: `http://127.0.0.1:8001/`
+- Swagger UI: `http://127.0.0.1:8001/docs`
+
+---
+
+## Monad Token-Gated Entry
+
+Agent entry is protected by **Monad mainnet transaction verification**.
+
+### Entry tx hash format
+
+- `entry_tx_hash` must be a **real Monad mainnet transaction hash**
+- Format: `0x` + **64 hexadecimal characters**
+- Placeholder values such as `0x...` will return:
+  - `HTTP 400: Invalid entry_tx_hash format`
+
+This strict validation is intentional and confirms real on-chain verification.
+
+### Example
+
+```bash
+curl -s http://127.0.0.1:8001/debug/monad
+
+curl -s -X POST http://127.0.0.1:8001/join \
+  -H "Content-Type: application/json" \
+  -d '{"name":"alice","deposit_mon":0,"entry_tx_hash":"0x<64-hex-mainnet-tx>"}'
+```
+
+Notes:
+- Reusing the same transaction hash will return **HTTP 409 Conflict** (anti-replay protection).
+- The join response includes the created agent under `agent` (e.g. `{ "agent": { "id": 1, ... } }`).
+
+---
+
+## Demo Flow (≤ 2 minutes)
+
+```bash
+# Reset world
+curl -s -X POST http://127.0.0.1:8001/reset
+
+# Load demo scenario (creates multiple agents)
+curl -s -X POST http://127.0.0.1:8001/scenario/basic
+
+# Run autonomous simulation
+curl -s -X POST http://127.0.0.1:8001/auto/tick
+curl -s -X POST http://127.0.0.1:8001/tick
+
+# Inspect world and decisions
+curl -s http://127.0.0.1:8001/world
+curl -s http://127.0.0.1:8001/explain/recent
+```
+
+Optional:
+- `POST /demo/run` may be present as a shortcut, but the preferred flow is explicit `/auto/tick` + `/tick`.
+
+---
+
+## Smoke Test
+
+A deterministic smoke test is included to verify the happy-path behavior.
+
+```bash
+chmod +x smoke_test.sh
+./smoke_test.sh http://127.0.0.1:8001
+```
+
+In token-gated mode, provide a real transaction hash:
+
+```bash
+SMOKE_ENTRY_TX_HASH=0x<64-hex-mainnet-tx> ./smoke_test.sh http://127.0.0.1:8001
+```
+
+---
+
+## API Overview
+
+Core endpoints:
+- `POST /join` — add an agent (token-gated)
+- `POST /reset` — reset world state
+- `POST /tick` — advance world time
+- `POST /auto/tick` — advance autonomous simulation
+- `POST /auto/step` — single autonomous step
+- `POST /scenario/basic` — load demo scenario
+- `GET /world` — inspect world state
+- `GET /logs` — recent logs
+- `GET /explain/recent` — explain recent decisions
 
 Persistence:
 - `POST /persist/save`
 - `POST /persist/load`
 - `GET /persist/status`
 
----
-
-## Demo in 60 seconds
-
-### Monad token‑gated entry demo
-
-```bash
-curl -s http://localhost:8001/debug/monad
-
-curl -s -X POST http://localhost:8001/join \
-  -H "Content-Type: application/json" \
-  -d '{"name":"alice","deposit_mon":0,"entry_tx_hash":"0xd2f38f1619f1c3342f76af4c5283f4845bfcdbc008823d343783f860af1a55a9"}'
-
-curl -s "http://localhost:8001/explain/recent?limit=20"
-```
-
-This demonstrates real on‑chain verification and deterministic replay protection.
-
-Start the server:
-```bash
-python3 -m uvicorn app:app --host 127.0.0.1 --port 8000
-```
-
-Load the demo scenario:
-```bash
-curl -s -X POST http://127.0.0.1:8000/scenario/basic | python3 -m json.tool
-```
-
-Run a short autonomous simulation:
-```bash
-curl -s -X POST http://127.0.0.1:8000/demo/run | python3 -m json.tool
-```
-
-Inspect why actions happened:
-```bash
-curl -s http://127.0.0.1:8000/explain/recent | python3 -m json.tool
-```
+Debug:
+- `GET /debug/info`
+- `GET /debug/source`
+- `GET /debug/monad`
 
 ---
 
-## Core Features
+## Persistence
 
-### World State
-- locations: spawn, market, workshop
-- global tick counter
-- action queue
+The world state can be saved and restored via JSON snapshots.
 
-### Agents
-- position, balance, inventory
-- optional autonomous mode
+Snapshots include:
+- world tick
+- agents and locations
+- economy state
+- used transaction hashes (anti-replay)
 
-### Actions
-- move
-- earn (only in workshop)
-- say
-
-### Persistence
-- JSON snapshot save / load
-- deterministic restore after reset
-
-### Explainability
-- human-readable event explanations
+Rollback and replay attacks are prevented by design.
 
 ---
 
-## Autonomous Behavior (v1)
-
-Agents operate in a shared environment and can:
-- decide actions based on world state
-- enqueue actions autonomously
-- execute behavior step-by-step via ticks
-
-Behavior rules are explicit and deterministic to keep the system transparent and inspectable.
-
----
-
-## API Overview
-
-Main endpoints:
-- `POST /join` — add an agent
-- `POST /tick` — advance world time
-- `POST /scenario/basic` — load demo scenario
-- `POST /demo/run` — run autonomous demo
-- `POST /persist/save` — save world snapshot
-- `POST /persist/load` — load snapshot
-- `GET /world` — inspect world state
-- `GET /explain/recent` — explain recent actions
-
-Swagger UI: `http://127.0.0.1:8000/docs`
-
----
-
-## Quickstart
-
-### Setup environment
-```bash
-cd /path/to/world_model_agent
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install fastapi uvicorn pydantic
-```
-
-### Run server
-```bash
-python3 -m uvicorn app:app --host 127.0.0.1 --port 8000
-```
-
-This starts a stateful world process in memory; the world advances only when you call `/tick`.
-
-### Verify setup (debug)
-```bash
-curl -s http://127.0.0.1:8000/debug/info | python3 -m json.tool
-```
-
-If this endpoint responds, the agent world is live and ready for interaction.
-
----
-
-## Project Scope Notes
+## Scope Notes
 
 - This repository freezes **MVP v1** for hackathon submission stability.
-- Economy tuning, autonomy improvements, and A2A interactions are planned as **V2** work.
-- Monad integration is intentionally minimal and non‑invasive to preserve determinism and auditability.
+- On-chain requirements are satisfied via **mainnet transaction-hash verification**; no contract deployment is required.
+- Deeper on-chain agent-to-agent interactions and UI enhancements are planned for future versions.
+
+---
+
+## License
+
+MIT

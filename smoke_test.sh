@@ -9,6 +9,7 @@ set -euo pipefail
 
 BASE="${1:-http://127.0.0.1:8001}"
 AUTH_HEADER_NAME="${SMOKE_API_KEY_HEADER:-X-API-Key}"
+STRICT_TOKEN_GATE="$(printf '%s' "${STRICT_TOKEN_GATE:-false}" | tr '[:upper:]' '[:lower:]')"
 
 # Optional: load env vars from .env (so you can set SMOKE_ENTRY_TX_HASH there)
 if [ -f ".env" ]; then
@@ -20,6 +21,9 @@ fi
 
 if [ -n "${SMOKE_API_KEY:-}" ]; then
   echo "Using auth header for POST requests: $AUTH_HEADER_NAME"
+fi
+if [ "$STRICT_TOKEN_GATE" = "true" ]; then
+  echo "STRICT_TOKEN_GATE=true (token-gated join must be fully exercised)"
 fi
 
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t wma_smoke)"
@@ -135,6 +139,9 @@ elif [ "$JOIN_STATUS" = "402" ]; then
     fi
   else
     echo "POST /join -> 402 Payment Required (set SMOKE_ENTRY_TX_HASH to fully exercise join)"
+    if [ "$STRICT_TOKEN_GATE" = "true" ]; then
+      fail "STRICT_TOKEN_GATE=true but SMOKE_ENTRY_TX_HASH is not set"
+    fi
   fi
 elif [ "$JOIN_STATUS" = "401" ]; then
   echo "POST /join -> 401 Unauthorized"
