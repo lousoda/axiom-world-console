@@ -31,6 +31,32 @@ cp .env.demo.live.example .env.demo.live
 - `.env.demo.local`: stable demo mode without external RPC dependency (`ALLOW_FREE_JOIN=true`)
 - `.env.demo.live`: token-gated mode with external Monad RPC checks (`ALLOW_FREE_JOIN=false`)
 
+Do not commit .env* files; only commit *.example.
+
+## Demo (local)
+
+```bash
+export WORLD_API_KEY="your_key"
+cp .env.demo.local.example .env.demo.local
+bash scripts/run_demo.sh .env.demo.local
+# in another terminal:
+export WORLD_API_KEY="your_key"
+bash scripts/preflight_demo.sh .env.demo.local
+```
+
+## Demo (live/strict)
+
+```bash
+export WORLD_API_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-tx-hash>"
+cp .env.demo.live.example .env.demo.live
+bash scripts/run_demo.sh .env.demo.live
+# in another terminal:
+export WORLD_API_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-tx-hash>"
+bash scripts/preflight_demo.sh .env.demo.live
+```
+
 ## Recommended Run Commands
 
 Start server (single worker, deterministic in-memory state):

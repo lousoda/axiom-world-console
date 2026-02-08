@@ -9,6 +9,7 @@ __pycache__/
 *.pyd
 
 # Environment variables
+# Demo runtime env files (keep .example files committed)
 .env
 .env.demo.local
 .env.demo.live
