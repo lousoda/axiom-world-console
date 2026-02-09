@@ -189,6 +189,13 @@ MONAD_TREASURY_ADDRESS="0x833dD2b2c4085674E57B058126DD59235D893a2e" \
 MIN_ENTRY_FEE_WEI="10000000000000000"
 ```
 
+Note: `fly.toml` uses immediate deploy strategy to reduce temporary multi-machine rollout for in-memory state:
+
+```toml
+[deploy]
+  strategy = "immediate"
+```
+
 Deploy:
 
 ```bash

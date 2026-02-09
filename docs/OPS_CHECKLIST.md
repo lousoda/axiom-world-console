@@ -64,3 +64,21 @@ Before handoff, include:
 1. Current branch and commit hash.
 2. Which profile was validated last (`local` or `live`).
 3. Last used tx hash list location (`.demo/used_tx_hashes.txt`) for strict runs.
+
+## 6) Fly Deploy Discipline
+
+1. Keep Fly single-machine deterministic behavior.
+2. Use immediate strategy to avoid temporary multi-machine rollout for in-memory state:
+
+```toml
+[deploy]
+  strategy = "immediate"
+```
+
+3. After each deploy run:
+
+```bash
+flyctl scale count 1
+flyctl machine list
+curl -sS -i https://world-model-agent-api.fly.dev/
+```
