@@ -16,13 +16,7 @@ fail() {
 }
 
 if [ ! -f "$ENV_FILE" ]; then
-  # If caller didn't explicitly pass an env file, allow a safe fallback to repo-root .env
-  if [ -z "$USER_ENV_ARG" ] && [ -f "$ROOT_DIR/.env" ]; then
-    log "WARN: Env file not found: $ENV_FILE; falling back to $ROOT_DIR/.env"
-    ENV_FILE="$ROOT_DIR/.env"
-  else
-    fail "Env file not found: $ENV_FILE"
-  fi
+  fail "Env file not found: $ENV_FILE"
 fi
 
 # Preserve explicit shell exports so env-file defaults do not override them.

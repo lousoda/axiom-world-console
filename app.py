@@ -9,7 +9,8 @@ import inspect
 from threading import Lock, RLock
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
+if os.getenv("LOAD_DOTENV", "").strip().lower() in {"1", "true", "yes", "on"}:
+    load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
 import re
 import requests
 
@@ -474,6 +475,22 @@ def _parse_min_fee_wei() -> int:
         except Exception:
             return 0
     return 0
+
+def _validate_runtime_config() -> None:
+    if REQUIRE_API_KEY and not WORLD_GATE_KEY:
+        raise RuntimeError("REQUIRE_API_KEY=true but WORLD_GATE_KEY is empty")
+
+    if not ALLOW_FREE_JOIN:
+        if not MONAD_RPC_URL:
+            raise RuntimeError("ALLOW_FREE_JOIN=false requires MONAD_RPC_URL")
+        if not MONAD_TREASURY_ADDRESS or not ADDRESS_RE.match(MONAD_TREASURY_ADDRESS):
+            raise RuntimeError("ALLOW_FREE_JOIN=false requires valid MONAD_TREASURY_ADDRESS")
+        if _parse_min_fee_wei() <= 0:
+            raise RuntimeError("ALLOW_FREE_JOIN=false requires MIN_ENTRY_FEE_WEI or MIN_ENTRY_FEE_MON")
+
+@app.on_event("startup")
+def _startup_validate_config() -> None:
+    _validate_runtime_config()
 
 
 def _rpc_call(method: str, params: list) -> Any:
