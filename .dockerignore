@@ -1,0 +1,24 @@
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.vscode
+.DS_Store
+
+# Local runtime configs / secrets
+.env
+.env.demo.local
+.env.demo.live
+
+# Local artifacts
+ARTIFACTS
+.demo
+world_snapshot.json
+
+# Build/report artifacts
+*.patch

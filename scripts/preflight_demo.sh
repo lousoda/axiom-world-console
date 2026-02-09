@@ -59,6 +59,28 @@ bash -n "$0"
 : "${MONAD_CHAIN_ID:=143}"
 : "${API_KEY_HEADER_NAME:=X-World-Gate}"
 
+check_docker_profile_mismatch() {
+  command -v docker >/dev/null 2>&1 || return 0
+  docker inspect world_model_agent_api >/dev/null 2>&1 || return 0
+
+  running_state=$(docker inspect -f '{{.State.Running}}' world_model_agent_api 2>/dev/null || true)
+  [ "$running_state" = "true" ] || return 0
+
+  container_env=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' world_model_agent_api 2>/dev/null || true)
+  [ -n "$container_env" ] || return 0
+
+  container_allow_free_join=$(printf '%s\n' "$container_env" | sed -n 's/^ALLOW_FREE_JOIN=//p' | tail -n1)
+  container_require_api_key=$(printf '%s\n' "$container_env" | sed -n 's/^REQUIRE_API_KEY=//p' | tail -n1)
+
+  if [ -n "$container_allow_free_join" ] && [ "$container_allow_free_join" != "$ALLOW_FREE_JOIN" ]; then
+    fail "Profile mismatch: env file sets ALLOW_FREE_JOIN=$ALLOW_FREE_JOIN, but running Docker container has ALLOW_FREE_JOIN=$container_allow_free_join. Restart with matching DEMO_ENV_FILE."
+  fi
+
+  if [ -n "$container_require_api_key" ] && [ "$container_require_api_key" != "$REQUIRE_API_KEY" ]; then
+    fail "Profile mismatch: env file sets REQUIRE_API_KEY=$REQUIRE_API_KEY, but running Docker container has REQUIRE_API_KEY=$container_require_api_key. Restart with matching DEMO_ENV_FILE."
+  fi
+}
+
 if [ "$REQUIRE_API_KEY" = "true" ] && [ -z "${WORLD_GATE_KEY:-}" ]; then
   fail "REQUIRE_API_KEY=true but WORLD_GATE_KEY is empty"
 fi
@@ -67,6 +89,8 @@ if [ "$ALLOW_FREE_JOIN" != "true" ]; then
   [ -n "${MONAD_RPC_URL:-}" ] || fail "ALLOW_FREE_JOIN=false requires MONAD_RPC_URL"
   [ -n "${MONAD_TREASURY_ADDRESS:-}" ] || fail "ALLOW_FREE_JOIN=false requires MONAD_TREASURY_ADDRESS"
 fi
+
+check_docker_profile_mismatch
 
 if [ -n "${MONAD_RPC_URL:-}" ]; then
   rpc_code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 6 \

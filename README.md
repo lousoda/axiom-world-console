@@ -61,6 +61,7 @@ Operational / generated artifacts:
 
 - Risk register: `docs/DEMO_RISK_REGISTER.md`
 - Runbook: `docs/DEMO_RUNBOOK.md`
+- Ops checklist (single source for operator notes + sanity commands): `docs/OPS_CHECKLIST.md`
 - One-command gate: `scripts/demo_gate.sh`
 
 Quick gate runs:
@@ -97,6 +98,63 @@ export WORLD_GATE_KEY="your_key"
 export SMOKE_ENTRY_TX_HASH="0x<64-hex-tx-hash>"
 bash scripts/preflight_demo.sh .env.demo.live
 ```
+
+## Docker (local demo profile)
+
+```bash
+export WORLD_GATE_KEY="your_key"
+cp .env.demo.local.example .env.demo.local
+docker compose up --build
+```
+
+In another terminal:
+
+```bash
+export WORLD_GATE_KEY="your_key"
+bash scripts/preflight_demo.sh .env.demo.local http://127.0.0.1:8001
+```
+
+Stop container:
+
+```bash
+docker compose down
+```
+
+Recommended no-confusion one-command flow:
+
+```bash
+export WORLD_GATE_KEY="your_key"
+bash scripts/docker_gate.sh local 8001
+```
+
+## Docker (live/strict profile)
+
+```bash
+export WORLD_GATE_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
+cp .env.demo.live.example .env.demo.live
+DEMO_ENV_FILE=.env.demo.live docker compose up --build
+```
+
+In another terminal:
+
+```bash
+export WORLD_GATE_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
+bash scripts/preflight_demo.sh .env.demo.live http://127.0.0.1:8001
+```
+
+Recommended no-confusion one-command flow:
+
+```bash
+export WORLD_GATE_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
+bash scripts/docker_gate.sh live 8001
+```
+
+Notes:
+- Docker launch keeps `--workers 1` for deterministic in-memory state.
+- Keep secrets in shell env; do not commit `.env.demo.local` / `.env.demo.live`.
 
 ## Recommended Run Commands
 
