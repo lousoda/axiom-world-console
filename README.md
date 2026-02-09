@@ -156,6 +156,47 @@ Notes:
 - Docker launch keeps `--workers 1` for deterministic in-memory state.
 - Keep secrets in shell env; do not commit `.env.demo.local` / `.env.demo.live`.
 
+## Fly.io Deploy (API only)
+
+Authenticate once:
+
+```bash
+flyctl auth login
+flyctl auth whoami
+```
+
+Create app (first time only):
+
+```bash
+flyctl apps create world-model-agent-api
+```
+
+Set runtime secrets (example live profile):
+
+```bash
+flyctl secrets set \
+WORLD_GATE_KEY="your_key" \
+ALLOW_FREE_JOIN="false" \
+REQUIRE_API_KEY="true" \
+API_KEY_HEADER_NAME="X-World-Gate" \
+DEBUG_ENDPOINTS_ENABLED="false" \
+RATE_LIMIT_ENABLED="true" \
+RATE_LIMIT_MAX_REQUESTS="100" \
+RATE_LIMIT_WINDOW_SEC="60" \
+MONAD_CHAIN_ID="143" \
+MONAD_RPC_URL="https://rpc.monad.xyz" \
+MONAD_TREASURY_ADDRESS="0x833dD2b2c4085674E57B058126DD59235D893a2e" \
+MIN_ENTRY_FEE_WEI="10000000000000000"
+```
+
+Deploy:
+
+```bash
+flyctl deploy --remote-only
+flyctl scale count 1
+flyctl status
+```
+
 ## Recommended Run Commands
 
 Start server (single worker, deterministic in-memory state):
