@@ -103,4 +103,14 @@ log "Env file: $ENV_FILE"
 log "Starting server on $HOST:$PORT (workers=1)"
 log "Config: ALLOW_FREE_JOIN=$ALLOW_FREE_JOIN REQUIRE_API_KEY=$REQUIRE_API_KEY DEBUG_ENDPOINTS_ENABLED=$DEBUG_ENDPOINTS_ENABLED RATE_LIMIT_ENABLED=$RATE_LIMIT_ENABLED"
 
-exec python3 -m uvicorn app:app --host "$HOST" --port "$PORT" --workers 1
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  else
+    PYTHON_BIN="python3"
+  fi
+fi
+log "Python: $PYTHON_BIN"
+
+exec "$PYTHON_BIN" -m uvicorn app:app --host "$HOST" --port "$PORT" --workers 1

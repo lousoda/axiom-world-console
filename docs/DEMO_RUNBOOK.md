@@ -9,7 +9,7 @@ export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
 ```
 2. Run automated gate for live profile:
 ```bash
-bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh live 8011
+bash scripts/demo_gate.sh live 8011
 ```
 
 ## T-5 minutes
@@ -36,7 +36,7 @@ curl -sS http://127.0.0.1:8011/explain/recent
 1. For rehearsal or infra instability, switch to local profile:
 ```bash
 export WORLD_GATE_KEY="your_key"
-bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh local 8011
+bash scripts/demo_gate.sh local 8011
 ```
 2. For final proof in bounty context, use live profile with real Monad mainnet tx hash.
 
@@ -44,6 +44,6 @@ bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh lo
 
 Record each strict-run tx hash locally (do not commit):
 ```bash
-mkdir -p /Users/naturalmetalgear/Documents/world_model_agent/.demo
-echo "$(date -u +%FT%TZ) 0x<tx_hash>" >> /Users/naturalmetalgear/Documents/world_model_agent/.demo/used_tx_hashes.txt
+mkdir -p .demo
+echo "$(date -u +%FT%TZ) 0x<tx_hash>" >> .demo/used_tx_hashes.txt
 ```

@@ -4,7 +4,7 @@ Built for the **Moltiverse Hackathon (Agent Track)**.
 
 Status: **MVP Freeze v1 (stable)**  
 > This document represents the frozen v1 state used for submission. Active development may continue in `README.md` (if present).
-> Legacy note: canonical run commands and current auth/header conventions are maintained in `/Users/naturalmetalgear/Documents/world_model_agent/README.md`.
+> Legacy note: canonical run commands and current auth/header conventions are maintained in `README.md`.
 
 ---
 

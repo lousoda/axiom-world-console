@@ -6,7 +6,7 @@ import time
 import os
 import json
 import inspect
-from threading import Lock
+from threading import Lock, RLock
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
@@ -44,7 +44,7 @@ def make_initial_world_state() -> Dict[str, Any]:
     }
 
 world_state: Dict[str, Any] = make_initial_world_state()
-WORLD_STATE_LOCK = Lock()
+WORLD_STATE_LOCK = RLock()
 
 def reset_in_place(preserve_used_tx_hashes: bool = False) -> None:
     """Очищає state без заміни dict-об’єкта (менше сюрпризів)."""
@@ -430,11 +430,12 @@ def persist_status(path: Optional[str] = None):
 
 @app.post("/persist/save")
 def persist_save(req: PersistSaveRequest = Body(default=PersistSaveRequest())):
-    target = _snapshot_path(req.path)
-    # Log BEFORE saving so the snapshot includes this event.
-    log("persist_save", {"path": str(target), "include_logs": req.include_logs})
-    res = save_world_state(path=req.path, include_logs=req.include_logs)
-    return res
+    with WORLD_STATE_LOCK:
+        target = _snapshot_path(req.path)
+        # Log BEFORE saving so the snapshot includes this event.
+        log("persist_save", {"path": str(target), "include_logs": req.include_logs})
+        res = save_world_state(path=req.path, include_logs=req.include_logs)
+        return res
 
 @app.post("/persist/load")
 def persist_load(req: PersistLoadRequest = Body(default=PersistLoadRequest())):
@@ -806,52 +807,53 @@ class ActRequest(BaseModel):
 
 @app.post("/act")
 def act(req: ActRequest):
-    _ = find_agent(req.agent_id)
-    payload = req.payload or {}
+    with WORLD_STATE_LOCK:
+        _ = find_agent(req.agent_id)
+        payload = req.payload or {}
 
-    if req.type == "move":
-        to = payload.get("to")
-        locs = world_state.get("locations", ["spawn", "market", "workshop"])
-        if not isinstance(locs, list):
-            locs = ["spawn", "market", "workshop"]
-        if to is None or not isinstance(to, str) or to not in locs:
-            raise HTTPException(
-                status_code=400,
-                detail="move requires payload.to (string, one of: spawn, market, workshop)",
-            )
+        if req.type == "move":
+            to = payload.get("to")
+            locs = world_state.get("locations", ["spawn", "market", "workshop"])
+            if not isinstance(locs, list):
+                locs = ["spawn", "market", "workshop"]
+            if to is None or not isinstance(to, str) or to not in locs:
+                raise HTTPException(
+                    status_code=400,
+                    detail="move requires payload.to (string, one of: spawn, market, workshop)",
+                )
 
-    elif req.type == "earn":
-        amount = payload.get("amount", 1)
-        if not isinstance(amount, int) or amount <= 0:
-            raise HTTPException(status_code=400, detail="earn.amount must be positive int")
+        elif req.type == "earn":
+            amount = payload.get("amount", 1)
+            if not isinstance(amount, int) or amount <= 0:
+                raise HTTPException(status_code=400, detail="earn.amount must be positive int")
 
-    elif req.type == "say":
-        text = payload.get("text", "")
-        if not isinstance(text, str) or not text.strip():
-            raise HTTPException(status_code=400, detail="say.text must be non-empty string")
+        elif req.type == "say":
+            text = payload.get("text", "")
+            if not isinstance(text, str) or not text.strip():
+                raise HTTPException(status_code=400, detail="say.text must be non-empty string")
 
-    elif req.type == "transfer":
-        to_agent_id = payload.get("to_agent_id")
-        amount = payload.get("amount")
-        if not isinstance(to_agent_id, int) or to_agent_id <= 0:
-            raise HTTPException(status_code=400, detail="transfer.to_agent_id must be positive int")
-        if not isinstance(amount, int) or amount <= 0:
-            raise HTTPException(status_code=400, detail="transfer.amount must be positive int")
-        if to_agent_id == req.agent_id:
-            raise HTTPException(status_code=400, detail="transfer.to_agent_id must be different from agent_id")
-        # Validate receiver exists early for better UX
-        _ = find_agent(to_agent_id)
+        elif req.type == "transfer":
+            to_agent_id = payload.get("to_agent_id")
+            amount = payload.get("amount")
+            if not isinstance(to_agent_id, int) or to_agent_id <= 0:
+                raise HTTPException(status_code=400, detail="transfer.to_agent_id must be positive int")
+            if not isinstance(amount, int) or amount <= 0:
+                raise HTTPException(status_code=400, detail="transfer.amount must be positive int")
+            if to_agent_id == req.agent_id:
+                raise HTTPException(status_code=400, detail="transfer.to_agent_id must be different from agent_id")
+            # Validate receiver exists early for better UX
+            _ = find_agent(to_agent_id)
 
-    action = {
-        "queued_at_tick": world_state["tick"],
-        "agent_id": req.agent_id,
-        "type": req.type,
-        "payload": payload,
-    }
-    world_state["action_queue"].append(action)
-    log("queued_action", action)
+        action = {
+            "queued_at_tick": world_state["tick"],
+            "agent_id": req.agent_id,
+            "type": req.type,
+            "payload": payload,
+        }
+        world_state["action_queue"].append(action)
+        log("queued_action", action)
 
-    return {"ok": True, "queued": action}
+        return {"ok": True, "queued": action}
 
 # ============================================================
 # MARKET (x402-style economy)
@@ -865,95 +867,96 @@ class MarketBuyRequest(BaseModel):
 
 @app.post("/market/buy")
 def market_buy(req: MarketBuyRequest, payment_proof: Optional[str] = Header(default=None, alias="X-Payment-Proof")):
-    agent = find_agent(req.agent_id)
+    with WORLD_STATE_LOCK:
+        agent = find_agent(req.agent_id)
 
-    if agent.get("status") != "active":
-        raise HTTPException(status_code=400, detail="Agent not active")
+        if agent.get("status") != "active":
+            raise HTTPException(status_code=400, detail="Agent not active")
 
-    if agent.get("pos") != "market":
-        raise HTTPException(status_code=400, detail="Agent must be in market to buy")
+        if agent.get("pos") != "market":
+            raise HTTPException(status_code=400, detail="Agent must be in market to buy")
 
-    qty = int(req.qty)
-    price = int(MARKET_ITEM_PRICE_MON) * qty
-    bal = int(agent.get("balance_mon", 0))
+        qty = int(req.qty)
+        price = int(MARKET_ITEM_PRICE_MON) * qty
+        bal = int(agent.get("balance_mon", 0))
 
-    if bal < price:
-        treasury = (os.getenv("MARKET_TREASURY_ADDRESS", "") or MONAD_TREASURY_ADDRESS or "").strip()
-        # x402-style: 402 + machine-readable payment instructions
-        instructions = {
-            "protocol": "x402-lite",
-            "network": "monad-mainnet",
-            "currency": "MON",
-            "amount_mon": price,
-            "treasury": treasury,
-            "reason": "insufficient_funds",
-            "retry": {
-                "method": "POST",
-                "path": "/market/buy",
-                "header": "X-Payment-Proof",
-                "note": "Attach a payment proof (e.g., tx hash) in X-Payment-Proof and retry.",
-            },
-        }
+        if bal < price:
+            treasury = (os.getenv("MARKET_TREASURY_ADDRESS", "") or MONAD_TREASURY_ADDRESS or "").strip()
+            # x402-style: 402 + machine-readable payment instructions
+            instructions = {
+                "protocol": "x402-lite",
+                "network": "monad-mainnet",
+                "currency": "MON",
+                "amount_mon": price,
+                "treasury": treasury,
+                "reason": "insufficient_funds",
+                "retry": {
+                    "method": "POST",
+                    "path": "/market/buy",
+                    "header": "X-Payment-Proof",
+                    "note": "Attach a payment proof (e.g., tx hash) in X-Payment-Proof and retry.",
+                },
+            }
+
+            log(
+                "buy_denied_insufficient_funds",
+                {
+                    "agent_id": agent.get("id"),
+                    "item": req.item,
+                    "qty": qty,
+                    "price": price,
+                    "balance_mon": bal,
+                    "x402": instructions,
+                },
+            )
+
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "message": "Payment required: insufficient funds to buy",
+                    "payment": instructions,
+                },
+            )
+
+        agent["balance_mon"] = bal - price
+        inv = agent.get("inventory")
+        if not isinstance(inv, list):
+            inv = []
+            agent["inventory"] = inv
+        for _ in range(qty):
+            inv.append(req.item)
 
         log(
-            "buy_denied_insufficient_funds",
+            "buy",
             {
                 "agent_id": agent.get("id"),
                 "item": req.item,
                 "qty": qty,
                 "price": price,
-                "balance_mon": bal,
-                "x402": instructions,
+                "balance_mon": agent["balance_mon"],
             },
         )
 
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "message": "Payment required: insufficient funds to buy",
-                "payment": instructions,
-            },
-        )
+        if payment_proof and isinstance(payment_proof, str) and payment_proof.strip():
+            log(
+                "buy_payment_proof_seen",
+                {
+                    "agent_id": agent.get("id"),
+                    "item": req.item,
+                    "qty": qty,
+                    "proof": payment_proof.strip()[:120],
+                },
+            )
 
-    agent["balance_mon"] = bal - price
-    inv = agent.get("inventory")
-    if not isinstance(inv, list):
-        inv = []
-        agent["inventory"] = inv
-    for _ in range(qty):
-        inv.append(req.item)
-
-    log(
-        "buy",
-        {
+        return {
+            "ok": True,
             "agent_id": agent.get("id"),
             "item": req.item,
             "qty": qty,
             "price": price,
             "balance_mon": agent["balance_mon"],
-        },
-    )
-
-    if payment_proof and isinstance(payment_proof, str) and payment_proof.strip():
-        log(
-            "buy_payment_proof_seen",
-            {
-                "agent_id": agent.get("id"),
-                "item": req.item,
-                "qty": qty,
-                "proof": payment_proof.strip()[:120],
-            },
-        )
-
-    return {
-        "ok": True,
-        "agent_id": agent.get("id"),
-        "item": req.item,
-        "qty": qty,
-        "price": price,
-        "balance_mon": agent["balance_mon"],
-        "inventory_size": len(inv),
-    }
+            "inventory_size": len(inv),
+        }
 
 # ============================================================
 # TICK
@@ -961,165 +964,166 @@ def market_buy(req: MarketBuyRequest, payment_proof: Optional[str] = Header(defa
 
 @app.post("/tick")
 def tick(steps: int = Query(1, ge=1, le=100)):
-    world_state["tick"] = _to_non_negative_int(world_state.get("tick", 0), 0)
-    applied_total = 0
+    with WORLD_STATE_LOCK:
+        world_state["tick"] = _to_non_negative_int(world_state.get("tick", 0), 0)
+        applied_total = 0
 
-    for _ in range(steps):
-        world_state["tick"] += 1
+        for _ in range(steps):
+            world_state["tick"] += 1
 
-        # Reset economy capacity each tick
-        econ = world_state.get("economy", {})
-        if not isinstance(econ, dict):
-            econ = {}
-            world_state["economy"] = econ
-        cap_per_tick = _to_non_negative_int(econ.get("workshop_capacity_per_tick", 1), 1)
-        if cap_per_tick <= 0:
-            cap_per_tick = 1
-        econ["workshop_capacity_left"] = cap_per_tick
+            # Reset economy capacity each tick
+            econ = world_state.get("economy", {})
+            if not isinstance(econ, dict):
+                econ = {}
+                world_state["economy"] = econ
+            cap_per_tick = _to_non_negative_int(econ.get("workshop_capacity_per_tick", 1), 1)
+            if cap_per_tick <= 0:
+                cap_per_tick = 1
+            econ["workshop_capacity_left"] = cap_per_tick
 
-        queue = world_state.get("action_queue", [])
-        if not isinstance(queue, list):
-            log("action_queue_corrupt", {"type": str(type(queue))})
-            queue = []
-        world_state["action_queue"] = []
+            queue = world_state.get("action_queue", [])
+            if not isinstance(queue, list):
+                log("action_queue_corrupt", {"type": str(type(queue))})
+                queue = []
+            world_state["action_queue"] = []
 
-        applied_this_tick = 0
+            applied_this_tick = 0
 
-        for action in queue:
-            if not isinstance(action, dict):
-                log("action_skipped_invalid", {"action": action, "reason": "not a dict"})
-                continue
-            agent_id = action.get("agent_id")
-            if agent_id is None:
-                log("action_skipped_invalid", {"action": action, "reason": "missing agent_id"})
-                continue
-            try:
-                agent = find_agent(agent_id)
-            except HTTPException:
-                log("action_skipped_unknown_agent", {"action": action})
-                continue
-
-            a_type = action.get("type")
-            payload = action.get("payload") or {}
-
-            if a_type is None:
-                log("action_skipped_invalid", {"action": action, "reason": "missing type"})
-                continue
-
-            if a_type == "move":
-                to = payload.get("to")
-                if to is None or not isinstance(to, str) or to not in world_state.get("locations", []):
-                    log("move_denied_invalid_payload", {"agent_id": agent.get("id"), "payload": payload})
+            for action in queue:
+                if not isinstance(action, dict):
+                    log("action_skipped_invalid", {"action": action, "reason": "not a dict"})
+                    continue
+                agent_id = action.get("agent_id")
+                if agent_id is None:
+                    log("action_skipped_invalid", {"action": action, "reason": "missing agent_id"})
+                    continue
+                try:
+                    agent = find_agent(agent_id)
+                except HTTPException:
+                    log("action_skipped_unknown_agent", {"action": action})
                     continue
 
-                # Economy v2 sink: moving costs 1 MON
-                cost = MOVE_COST_MON
-                bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
-                if bal < cost:
-                    log(
-                        "move_denied_insufficient_funds",
-                        {"agent_id": agent.get("id"), "pos": agent.get("pos"), "to": to, "balance_mon": bal, "cost": cost},
-                    )
+                a_type = action.get("type")
+                payload = action.get("payload") or {}
+
+                if a_type is None:
+                    log("action_skipped_invalid", {"action": action, "reason": "missing type"})
                     continue
 
-                agent["balance_mon"] = bal - cost
-                log(
-                    "move_cost",
-                    {"agent_id": agent.get("id"), "cost": cost, "balance_mon": agent["balance_mon"], "to": to},
-                )
-
-                agent["pos"] = to
-                log("move", {"agent_id": agent["id"], "to": agent["pos"]})
-                applied_this_tick += 1
-
-            elif a_type == "earn":
-                if agent["pos"] != "workshop":
-                    log("earn_denied_wrong_location", {"agent_id": agent["id"], "pos": agent["pos"]})
-                else:
-                    # Economy v2: workshop capacity constraint per tick
-                    left = _to_non_negative_int(econ.get("workshop_capacity_left", 0), 0)
-                    if left <= 0:
-                        log("earn_denied_capacity", {"agent_id": agent["id"], "pos": agent["pos"], "left": left})
-                        penalty_until = world_state["tick"] + 2  
-                        agent["cooldown_until_tick"] = max(_to_non_negative_int(agent.get("cooldown_until_tick", 0), 0), penalty_until)
-                        log("cooldown_penalty", {"agent_id": agent["id"], "until": agent["cooldown_until_tick"], "reason": "capacity"})
-                        agent["last_denied_reason"] = "capacity"
-                        agent["last_denied_tick"] = world_state["tick"]
+                if a_type == "move":
+                    to = payload.get("to")
+                    if to is None or not isinstance(to, str) or to not in world_state.get("locations", []):
+                        log("move_denied_invalid_payload", {"agent_id": agent.get("id"), "payload": payload})
                         continue
 
-                    amount = _to_int(payload.get("amount", 1), 0)
-                    if amount <= 0:
-                        log("earn_denied_invalid_amount", {"agent_id": agent["id"], "amount": payload.get("amount")})
+                    # Economy v2 sink: moving costs 1 MON
+                    cost = MOVE_COST_MON
+                    bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
+                    if bal < cost:
+                        log(
+                            "move_denied_insufficient_funds",
+                            {"agent_id": agent.get("id"), "pos": agent.get("pos"), "to": to, "balance_mon": bal, "cost": cost},
+                        )
                         continue
-                    agent["balance_mon"] = _to_non_negative_int(agent.get("balance_mon", 0), 0) + amount
-                    econ["workshop_capacity_left"] = left - 1
+
+                    agent["balance_mon"] = bal - cost
                     log(
-                        "earn",
-                        {
-                            "agent_id": agent["id"],
-                            "amount": amount,
-                            "balance_mon": agent["balance_mon"],
-                            "capacity_left": econ["workshop_capacity_left"],
-                        },
+                        "move_cost",
+                        {"agent_id": agent.get("id"), "cost": cost, "balance_mon": agent["balance_mon"], "to": to},
                     )
+
+                    agent["pos"] = to
+                    log("move", {"agent_id": agent["id"], "to": agent["pos"]})
                     applied_this_tick += 1
 
-            elif a_type == "say":
-                log("say", {"agent_id": agent["id"], "text": payload.get("text", ""), "pos": agent["pos"]})
-                applied_this_tick += 1
+                elif a_type == "earn":
+                    if agent["pos"] != "workshop":
+                        log("earn_denied_wrong_location", {"agent_id": agent["id"], "pos": agent["pos"]})
+                    else:
+                        # Economy v2: workshop capacity constraint per tick
+                        left = _to_non_negative_int(econ.get("workshop_capacity_left", 0), 0)
+                        if left <= 0:
+                            log("earn_denied_capacity", {"agent_id": agent["id"], "pos": agent["pos"], "left": left})
+                            penalty_until = world_state["tick"] + 2
+                            agent["cooldown_until_tick"] = max(_to_non_negative_int(agent.get("cooldown_until_tick", 0), 0), penalty_until)
+                            log("cooldown_penalty", {"agent_id": agent["id"], "until": agent["cooldown_until_tick"], "reason": "capacity"})
+                            agent["last_denied_reason"] = "capacity"
+                            agent["last_denied_tick"] = world_state["tick"]
+                            continue
 
-            elif a_type == "transfer":
-                to_agent_id = payload.get("to_agent_id")
-                amount = payload.get("amount")
+                        amount = _to_int(payload.get("amount", 1), 0)
+                        if amount <= 0:
+                            log("earn_denied_invalid_amount", {"agent_id": agent["id"], "amount": payload.get("amount")})
+                            continue
+                        agent["balance_mon"] = _to_non_negative_int(agent.get("balance_mon", 0), 0) + amount
+                        econ["workshop_capacity_left"] = left - 1
+                        log(
+                            "earn",
+                            {
+                                "agent_id": agent["id"],
+                                "amount": amount,
+                                "balance_mon": agent["balance_mon"],
+                                "capacity_left": econ["workshop_capacity_left"],
+                            },
+                        )
+                        applied_this_tick += 1
 
-                if not isinstance(to_agent_id, int) or to_agent_id <= 0:
-                    log("transfer_denied_invalid_target", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id})
-                    continue
-                if not isinstance(amount, int) or amount <= 0:
-                    log("transfer_denied_invalid_amount", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
-                    continue
-                if to_agent_id == agent.get("id"):
-                    log("transfer_denied_same_agent", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
-                    continue
+                elif a_type == "say":
+                    log("say", {"agent_id": agent["id"], "text": payload.get("text", ""), "pos": agent["pos"]})
+                    applied_this_tick += 1
 
-                try:
-                    receiver = find_agent(int(to_agent_id))
-                except HTTPException:
-                    log("transfer_denied_unknown_target", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
-                    continue
+                elif a_type == "transfer":
+                    to_agent_id = payload.get("to_agent_id")
+                    amount = payload.get("amount")
 
-                sender_bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
-                if sender_bal < int(amount):
+                    if not isinstance(to_agent_id, int) or to_agent_id <= 0:
+                        log("transfer_denied_invalid_target", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id})
+                        continue
+                    if not isinstance(amount, int) or amount <= 0:
+                        log("transfer_denied_invalid_amount", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
+                        continue
+                    if to_agent_id == agent.get("id"):
+                        log("transfer_denied_same_agent", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
+                        continue
+
+                    try:
+                        receiver = find_agent(int(to_agent_id))
+                    except HTTPException:
+                        log("transfer_denied_unknown_target", {"agent_id": agent.get("id"), "to_agent_id": to_agent_id, "amount": amount})
+                        continue
+
+                    sender_bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
+                    if sender_bal < int(amount):
+                        log(
+                            "transfer_denied_insufficient_funds",
+                            {
+                                "agent_id": agent.get("id"),
+                                "to_agent_id": int(to_agent_id),
+                                "amount": int(amount),
+                                "balance_mon": sender_bal,
+                            },
+                        )
+                        continue
+
+                    agent["balance_mon"] = sender_bal - int(amount)
+                    receiver["balance_mon"] = _to_non_negative_int(receiver.get("balance_mon", 0), 0) + int(amount)
+
                     log(
-                        "transfer_denied_insufficient_funds",
+                        "transfer",
                         {
                             "agent_id": agent.get("id"),
                             "to_agent_id": int(to_agent_id),
                             "amount": int(amount),
-                            "balance_mon": sender_bal,
+                            "sender_balance_mon": agent["balance_mon"],
+                            "receiver_balance_mon": receiver["balance_mon"],
                         },
                     )
-                    continue
+                    applied_this_tick += 1
 
-                agent["balance_mon"] = sender_bal - int(amount)
-                receiver["balance_mon"] = _to_non_negative_int(receiver.get("balance_mon", 0), 0) + int(amount)
+            applied_total += applied_this_tick
+            log("tick", {"applied_actions": applied_this_tick})
 
-                log(
-                    "transfer",
-                    {
-                        "agent_id": agent.get("id"),
-                        "to_agent_id": int(to_agent_id),
-                        "amount": int(amount),
-                        "sender_balance_mon": agent["balance_mon"],
-                        "receiver_balance_mon": receiver["balance_mon"],
-                    },
-                )
-                applied_this_tick += 1
-
-        applied_total += applied_this_tick
-        log("tick", {"applied_actions": applied_this_tick})
-
-    return {"ok": True, "tick": world_state["tick"], "applied_actions": applied_total}
+        return {"ok": True, "tick": world_state["tick"], "applied_actions": applied_total}
 
 # ============================================================
 # SPRINT 1: RESET / SCENARIO / METRICS / DEMO
@@ -1213,34 +1217,35 @@ def metrics():
 
 @app.post("/demo/run")
 def demo_run(steps: int = Query(5, ge=1, le=50)):
-    if len(world_state["agents"]) == 0:
-        scenario_basic()
+    with WORLD_STATE_LOCK:
+        if len(world_state["agents"]) == 0:
+            scenario_basic()
 
-    a0 = world_state["agents"][0]["id"]
+        a0 = world_state["agents"][0]["id"]
 
-    world_state["action_queue"].append({
-        "queued_at_tick": world_state["tick"],
-        "agent_id": a0,
-        "type": "move",
-        "payload": {"to": "workshop"},
-    })
-    tick(steps=1)
+        world_state["action_queue"].append({
+            "queued_at_tick": world_state["tick"],
+            "agent_id": a0,
+            "type": "move",
+            "payload": {"to": "workshop"},
+        })
+        tick(steps=1)
 
-    world_state["action_queue"].append({
-        "queued_at_tick": world_state["tick"],
-        "agent_id": a0,
-        "type": "earn",
-        "payload": {"amount": 3},
-    })
-    world_state["action_queue"].append({
-        "queued_at_tick": world_state["tick"],
-        "agent_id": a0,
-        "type": "say",
-        "payload": {"text": "demo tick run"},
-    })
+        world_state["action_queue"].append({
+            "queued_at_tick": world_state["tick"],
+            "agent_id": a0,
+            "type": "earn",
+            "payload": {"amount": 3},
+        })
+        world_state["action_queue"].append({
+            "queued_at_tick": world_state["tick"],
+            "agent_id": a0,
+            "type": "say",
+            "payload": {"text": "demo tick run"},
+        })
 
-    tick(steps=steps)
-    return {"ok": True, "tick": world_state["tick"], "agents": world_state["agents"], "metrics": metrics()}
+        tick(steps=steps)
+        return {"ok": True, "tick": world_state["tick"], "agents": world_state["agents"], "metrics": metrics()}
 
 # ============================================================
 # EXPLAIN
@@ -1437,48 +1442,53 @@ class GoalSetRequest(BaseModel):
 
 @app.post("/auto/enable")
 def auto_enable(req: AutoToggleRequest):
-    agent = find_agent(req.agent_id)
-    agent["auto"] = True
-    log("auto_enabled", {"agent_id": agent["id"]})
-    return {"ok": True, "agent_id": agent["id"], "auto": True}
+    with WORLD_STATE_LOCK:
+        agent = find_agent(req.agent_id)
+        agent["auto"] = True
+        log("auto_enabled", {"agent_id": agent["id"]})
+        return {"ok": True, "agent_id": agent["id"], "auto": True}
 
 @app.post("/auto/disable")
 def auto_disable(req: AutoToggleRequest):
-    agent = find_agent(req.agent_id)
-    agent["auto"] = False
-    log("auto_disabled", {"agent_id": agent["id"]})
-    return {"ok": True, "agent_id": agent["id"], "auto": False}
+    with WORLD_STATE_LOCK:
+        agent = find_agent(req.agent_id)
+        agent["auto"] = False
+        log("auto_disabled", {"agent_id": agent["id"]})
+        return {"ok": True, "agent_id": agent["id"], "auto": False}
 
 @app.post("/auto/enable_all")
 def auto_enable_all():
-    count = 0
-    for agent in world_state.get("agents", []):
-        if not isinstance(agent, dict):
-            continue
-        if agent.get("status") == "active":
-            agent["auto"] = True
-            count += 1
-    log("auto_enabled_all", {"count": count})
-    return {"ok": True, "enabled": count}
+    with WORLD_STATE_LOCK:
+        count = 0
+        for agent in world_state.get("agents", []):
+            if not isinstance(agent, dict):
+                continue
+            if agent.get("status") == "active":
+                agent["auto"] = True
+                count += 1
+        log("auto_enabled_all", {"count": count})
+        return {"ok": True, "enabled": count}
 
 @app.post("/auto/disable_all")
 def auto_disable_all():
-    count = 0
-    for agent in world_state.get("agents", []):
-        if not isinstance(agent, dict):
-            continue
-        if agent.get("auto") is True:
-            agent["auto"] = False
-            count += 1
-    log("auto_disabled_all", {"count": count})
-    return {"ok": True, "disabled": count}
+    with WORLD_STATE_LOCK:
+        count = 0
+        for agent in world_state.get("agents", []):
+            if not isinstance(agent, dict):
+                continue
+            if agent.get("auto") is True:
+                agent["auto"] = False
+                count += 1
+        log("auto_disabled_all", {"count": count})
+        return {"ok": True, "disabled": count}
 
 @app.post("/auto/goal")
 def auto_set_goal(req: GoalSetRequest):
-    agent = find_agent(req.agent_id)
-    agent["goal"] = req.goal
-    log("goal_set", {"agent_id": agent["id"], "goal": req.goal})
-    return {"ok": True, "agent_id": agent["id"], "goal": agent["goal"]}
+    with WORLD_STATE_LOCK:
+        agent = find_agent(req.agent_id)
+        agent["goal"] = req.goal
+        log("goal_set", {"agent_id": agent["id"], "goal": req.goal})
+        return {"ok": True, "agent_id": agent["id"], "goal": agent["goal"]}
 
 def _queue_action(agent_id: int, a_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     action = {
@@ -1664,18 +1674,20 @@ def auto_step_internal(limit_agents: int = 50) -> Dict[str, Any]:
 
 @app.post("/auto/step")
 def auto_step(limit_agents: int = Query(50, ge=1, le=500)):
-    return auto_step_internal(limit_agents=limit_agents)
+    with WORLD_STATE_LOCK:
+        return auto_step_internal(limit_agents=limit_agents)
 
 @app.post("/auto/tick")
 def auto_tick(limit_agents: int = Query(50, ge=1, le=500)):
-    step_res = auto_step_internal(limit_agents=limit_agents)
+    with WORLD_STATE_LOCK:
+        step_res = auto_step_internal(limit_agents=limit_agents)
 
-    # If no autonomous actions were generated, explicitly log world idle
-    if isinstance(step_res, dict) and step_res.get("n", 0) == 0:
-        log("world_idle", {"tick": world_state.get("tick", 0)})
+        # If no autonomous actions were generated, explicitly log world idle
+        if isinstance(step_res, dict) and step_res.get("n", 0) == 0:
+            log("world_idle", {"tick": world_state.get("tick", 0)})
 
-    tick_res = tick(steps=1)
-    return {"ok": True, "auto": step_res, "tick": tick_res}
+        tick_res = tick(steps=1)
+        return {"ok": True, "auto": step_res, "tick": tick_res}
 # Debug Monad endpoint
 @app.get("/debug/monad")
 def debug_monad():

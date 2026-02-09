@@ -35,43 +35,43 @@ Do not commit .env* files; only commit *.example.
 
 ## Project Map (Judge-Friendly)
 
-Canonical instructions live in this file: `/Users/naturalmetalgear/Documents/world_model_agent/README.md`.
+Canonical instructions live in this file: `README.md`.
 
 Required for demo run and verification:
-- `/Users/naturalmetalgear/Documents/world_model_agent/app.py`
-- `/Users/naturalmetalgear/Documents/world_model_agent/scripts/run_demo.sh`
-- `/Users/naturalmetalgear/Documents/world_model_agent/scripts/preflight_demo.sh`
-- `/Users/naturalmetalgear/Documents/world_model_agent/smoke_test.sh`
-- `/Users/naturalmetalgear/Documents/world_model_agent/.env.demo.local.example`
-- `/Users/naturalmetalgear/Documents/world_model_agent/.env.demo.live.example`
-- `/Users/naturalmetalgear/Documents/world_model_agent/tests/`
+- `app.py`
+- `scripts/run_demo.sh`
+- `scripts/preflight_demo.sh`
+- `smoke_test.sh`
+- `.env.demo.local.example`
+- `.env.demo.live.example`
+- `tests/`
 
 Supporting (helpful, but not required for core API demo):
-- `/Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh`
-- `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RUNBOOK.md`
-- `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RISK_REGISTER.md`
-- `/Users/naturalmetalgear/Documents/world_model_agent/README_FREEZE_v1.md` (archive snapshot)
+- `scripts/demo_gate.sh`
+- `docs/DEMO_RUNBOOK.md`
+- `docs/DEMO_RISK_REGISTER.md`
+- `README_FREEZE_v1.md` (archive snapshot)
 
 Operational / generated artifacts:
-- `/Users/naturalmetalgear/Documents/world_model_agent/.demo/`
-- `/Users/naturalmetalgear/Documents/world_model_agent/ARTIFACTS/`
-- `/Users/naturalmetalgear/Documents/world_model_agent/world_snapshot.json`
+- `.demo/`
+- `ARTIFACTS/`
+- `world_snapshot.json`
 
 ## Demo Ops
 
-- Risk register: `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RISK_REGISTER.md`
-- Runbook: `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RUNBOOK.md`
-- One-command gate: `/Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh`
+- Risk register: `docs/DEMO_RISK_REGISTER.md`
+- Runbook: `docs/DEMO_RUNBOOK.md`
+- One-command gate: `scripts/demo_gate.sh`
 
 Quick gate runs:
 
 ```bash
 export WORLD_GATE_KEY="your_key"
-bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh local 8011
+bash scripts/demo_gate.sh local 8011
 
 export WORLD_GATE_KEY="your_key"
 export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
-bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh live 8011
+bash scripts/demo_gate.sh live 8011
 ```
 
 ## Demo (local)
@@ -235,5 +235,5 @@ curl -sS -o /tmp/reset_no_key.json -w "%{http_code}" -X POST http://127.0.0.1:80
 
 ## Notes
 
-- Freeze document is a historical snapshot and may lag current run scripts: `/Users/naturalmetalgear/Documents/world_model_agent/README_FREEZE_v1.md`
+- Freeze document is a historical snapshot and may lag current run scripts: `README_FREEZE_v1.md`
 - This MVP is intentionally minimal and optimized for demo clarity, reproducibility, and judging.
