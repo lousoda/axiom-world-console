@@ -47,7 +47,7 @@ world_state: Dict[str, Any] = make_initial_world_state()
 WORLD_STATE_LOCK = RLock()
 
 def reset_in_place(preserve_used_tx_hashes: bool = False) -> None:
-    """Очищає state без заміни dict-об’єкта (менше сюрпризів)."""
+    """Clear state in place without replacing the dict object."""
     preserved_hashes: List[str] = []
     if preserve_used_tx_hashes:
         entry = world_state.get("entry", {})
@@ -205,24 +205,24 @@ def find_agent(agent_id: int) -> Dict[str, Any]:
 # ============================================================
 
 DEFAULT_SNAPSHOT_PATH = Path(os.getenv("WORLD_SNAPSHOT_PATH", "world_snapshot.json"))
-LAST_SAVED: Optional[dict] = None  # метадані останнього сейва
+LAST_SAVED: Optional[dict] = None  # metadata for the latest snapshot save
 
 def _snapshot_path(path: Optional[str] = None) -> Path:
     p = Path(path) if path else DEFAULT_SNAPSHOT_PATH
-    # Якщо передали директорію (існуючу) — пишемо стандартне ім'я в ній.
+    # If a directory path is provided, write the default filename inside it.
     if p.exists() and p.is_dir():
         p = p / "world_snapshot.json"
     return p
 
 def save_world_state(path: Optional[str] = None, include_logs: bool = True) -> dict:
     """
-    Зберігає snapshot у JSON.
-    Робимо shallow copy, щоб snapshot був ізольований від live dict.
+    Save a world snapshot as JSON.
+    Use a shallow copy so the snapshot is isolated from the live dict.
     """
     global LAST_SAVED
     p = _snapshot_path(path)
 
-    # Створюємо parent директорію, якщо її нема (на випадок кастомного path).
+    # Create parent directory if needed (for custom snapshot paths).
     if p.parent and not p.parent.exists():
         p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -236,7 +236,7 @@ def save_world_state(path: Optional[str] = None, include_logs: bool = True) -> d
         "world_state": ws,
     }
 
-    # атомарний запис: tmp -> replace
+    # Atomic write: tmp -> replace.
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(p)
@@ -253,8 +253,8 @@ def save_world_state(path: Optional[str] = None, include_logs: bool = True) -> d
 
 def _normalize_loaded_state(loaded: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Після load гарантуємо базові ключі + адекватні дефолти,
-    щоб /world, /tick, /persist/status не падали на KeyError.
+    After load, guarantee base keys and safe defaults so
+    /world, /tick, and /persist/status do not fail with KeyError.
     """
     base = make_initial_world_state()
 
@@ -1143,9 +1143,9 @@ def scenario_basic():
         reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
 
         agents = [
-            {"name": "alice", "deposit_mon": 10},
-            {"name": "bob", "deposit_mon": 2},
-            {"name": "charlie", "deposit_mon": 0},
+            {"name": "agent_1", "deposit_mon": 10},
+            {"name": "agent_2", "deposit_mon": 2},
+            {"name": "agent_3", "deposit_mon": 0},
         ]
 
         for a in agents:
@@ -1174,9 +1174,9 @@ def scenario_basic_auto():
         reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
 
         agents = [
-            {"name": "alice", "deposit_mon": 10, "goal": "earn", "auto": True},
-            {"name": "bob", "deposit_mon": 2, "goal": "wander", "auto": True},
-            {"name": "charlie", "deposit_mon": 0, "goal": "earn", "auto": True},
+            {"name": "agent_1", "deposit_mon": 10, "goal": "earn", "auto": True},
+            {"name": "agent_2", "deposit_mon": 2, "goal": "wander", "auto": True},
+            {"name": "agent_3", "deposit_mon": 0, "goal": "earn", "auto": True},
         ]
 
         for a in agents:
@@ -1355,7 +1355,7 @@ def _format_event(e: Dict[str, Any]) -> str:
         goal = data.get("goal")
         reason = data.get("reason")
         chosen = data.get("chosen")
-        # chosen може бути dict (queued action) або None
+        # chosen can be either a dict (queued action) or None
         chosen_short = None
         if isinstance(chosen, dict):
             chosen_short = {
@@ -1419,8 +1419,8 @@ GoalType = Literal["earn", "wander", "idle"]
 
 def _pick_next_location(current: str) -> str:
     """
-    Простий детермінований вибір локації (без random),
-    щоб було відтворювано: рух по колу.
+    Simple deterministic next-location pick (no randomness)
+    for reproducible circular movement.
     """
     locs = world_state.get("locations", ["spawn", "market", "workshop"])
     if not locs:

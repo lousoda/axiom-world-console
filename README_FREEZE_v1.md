@@ -73,7 +73,7 @@ curl -s http://127.0.0.1:8001/debug/monad
 
 curl -s -X POST http://127.0.0.1:8001/join \
   -H "Content-Type: application/json" \
-  -d '{"name":"alice","deposit_mon":0,"entry_tx_hash":"0x<64-hex-mainnet-tx>"}'
+  -d '{"name":"agent_1","deposit_mon":0,"entry_tx_hash":"0x<64-hex-mainnet-tx>"}'
 ```
 
 Notes:
