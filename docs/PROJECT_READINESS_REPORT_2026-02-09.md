@@ -81,3 +81,28 @@ Already implemented:
 
 The backend MVP is technically stable and demo-ready in the current branch.
 The primary remaining work is submission packaging and operational discipline, not core backend correctness.
+
+## Deployment / Monad / Solidity Decision (Research Addendum)
+
+1. Rules alignment (Agent Track + Bounty):
+- Agent Track explicitly says no token launch is required.
+- For bounties, project must meet the specific bounty PRD.
+- Mandatory submission includes public repo, demo video, and Monad integration explanation.
+- Contract addresses are required only if applicable.
+
+2. World Model Agent PRD alignment:
+- Core requirement is MON token-gated entry to a persistent world with external agent API.
+- PRD does not require launching a custom Solidity token/contract as a hard requirement.
+
+3. Practical implication for this project:
+- Backend/web app deployment does not need to be "on-chain"; it can be hosted on standard infra.
+- Monad requirement is satisfied via real Monad mainnet integration (chain checks + tx verification + entry gating).
+- Solidity is optional for this bounty scope unless the team chooses to add contract-based features.
+
+4. Submission form implication:
+- Treat "Link to deployed app" as required and provide a public URL.
+- If no custom contract is used, document "Contract addresses: N/A (not applicable)" and clearly explain Monad mainnet usage.
+
+5. Recommended plan:
+- First ship deployable backend + UI link for submission certainty.
+- Keep Solidity as an optional post-MVP enhancement path if time remains and risk budget allows.
