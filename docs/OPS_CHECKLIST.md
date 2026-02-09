@@ -82,3 +82,24 @@ flyctl scale count 1
 flyctl machine list
 curl -sS -i https://world-model-agent-api.fly.dev/
 ```
+
+## 7) Fly Recovery (Only if Rollout Stuck >2 min)
+
+Normal quick check:
+
+```bash
+flyctl machine list
+curl -sS -i https://world-model-agent-api.fly.dev/
+```
+
+If machine is stuck in `created` or `replacing` and health is not passing:
+
+```bash
+flyctl logs --app world-model-agent-api --no-tail
+flyctl machine restart 148e65edf44348
+flyctl machine list
+curl -sS -i https://world-model-agent-api.fly.dev/
+```
+
+Note:
+1. Do not run restart when machine is already `started` with `1/1` checks.
