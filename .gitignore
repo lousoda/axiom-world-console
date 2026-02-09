@@ -31,3 +31,5 @@ ARTIFACTS/
 
 # Local demo operations tracking (never commit)
 .demo/used_tx_hashes.txt
+
+.demo/current_fly_key.txt
