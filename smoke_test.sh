@@ -11,13 +11,8 @@ BASE="${1:-http://127.0.0.1:8001}"
 AUTH_HEADER_NAME="${SMOKE_API_KEY_HEADER:-X-World-Gate}"
 STRICT_TOKEN_GATE="$(printf '%s' "${STRICT_TOKEN_GATE:-false}" | tr '[:upper:]' '[:lower:]')"
 
-# Optional: load env vars from .env (so you can set SMOKE_ENTRY_TX_HASH there)
-if [ -f ".env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-fi
+# Intentionally do not auto-load .env here.
+# Pass required values explicitly via environment variables for deterministic smoke runs.
 
 if [ -n "${SMOKE_API_KEY:-}" ]; then
   echo "Using auth header for POST requests: $AUTH_HEADER_NAME"

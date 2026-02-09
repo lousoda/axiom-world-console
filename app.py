@@ -114,7 +114,7 @@ def _env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int
         return default
     return value
 
-DEBUG_ENDPOINTS_ENABLED = _env_bool("DEBUG_ENDPOINTS_ENABLED", True)
+DEBUG_ENDPOINTS_ENABLED = _env_bool("DEBUG_ENDPOINTS_ENABLED", False)
 REQUIRE_API_KEY = _env_bool("REQUIRE_API_KEY", False)
 API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-World-Gate").strip() or "X-World-Gate"
 WORLD_GATE_KEY = os.getenv("WORLD_GATE_KEY", "").strip()
