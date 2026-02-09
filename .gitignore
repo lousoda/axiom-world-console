@@ -28,3 +28,6 @@ ARTIFACTS/
 # Runtime artifacts
 world_snapshot.json
 ARTIFACTS/
+
+# Local demo operations tracking (never commit)
+.demo/used_tx_hashes.txt

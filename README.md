@@ -33,26 +33,67 @@ cp .env.demo.live.example .env.demo.live
 
 Do not commit .env* files; only commit *.example.
 
+## Project Map (Judge-Friendly)
+
+Canonical instructions live in this file: `/Users/naturalmetalgear/Documents/world_model_agent/README.md`.
+
+Required for demo run and verification:
+- `/Users/naturalmetalgear/Documents/world_model_agent/app.py`
+- `/Users/naturalmetalgear/Documents/world_model_agent/scripts/run_demo.sh`
+- `/Users/naturalmetalgear/Documents/world_model_agent/scripts/preflight_demo.sh`
+- `/Users/naturalmetalgear/Documents/world_model_agent/smoke_test.sh`
+- `/Users/naturalmetalgear/Documents/world_model_agent/.env.demo.local.example`
+- `/Users/naturalmetalgear/Documents/world_model_agent/.env.demo.live.example`
+- `/Users/naturalmetalgear/Documents/world_model_agent/tests/`
+
+Supporting (helpful, but not required for core API demo):
+- `/Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh`
+- `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RUNBOOK.md`
+- `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RISK_REGISTER.md`
+- `/Users/naturalmetalgear/Documents/world_model_agent/README_FREEZE_v1.md` (archive snapshot)
+
+Operational / generated artifacts:
+- `/Users/naturalmetalgear/Documents/world_model_agent/.demo/`
+- `/Users/naturalmetalgear/Documents/world_model_agent/ARTIFACTS/`
+- `/Users/naturalmetalgear/Documents/world_model_agent/world_snapshot.json`
+
+## Demo Ops
+
+- Risk register: `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RISK_REGISTER.md`
+- Runbook: `/Users/naturalmetalgear/Documents/world_model_agent/docs/DEMO_RUNBOOK.md`
+- One-command gate: `/Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh`
+
+Quick gate runs:
+
+```bash
+export WORLD_GATE_KEY="your_key"
+bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh local 8011
+
+export WORLD_GATE_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
+bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh live 8011
+```
+
 ## Demo (local)
 
 ```bash
-export WORLD_API_KEY="your_key"
+export WORLD_GATE_KEY="your_key"
 cp .env.demo.local.example .env.demo.local
 bash scripts/run_demo.sh .env.demo.local
 # in another terminal:
-export WORLD_API_KEY="your_key"
+export WORLD_GATE_KEY="your_key"
 bash scripts/preflight_demo.sh .env.demo.local
 ```
 
 ## Demo (live/strict)
 
 ```bash
-export WORLD_API_KEY="your_key"
+export WORLD_GATE_KEY="your_key"
 export SMOKE_ENTRY_TX_HASH="0x<64-hex-tx-hash>"
 cp .env.demo.live.example .env.demo.live
 bash scripts/run_demo.sh .env.demo.live
 # in another terminal:
-export WORLD_API_KEY="your_key"
+export WORLD_GATE_KEY="your_key"
 export SMOKE_ENTRY_TX_HASH="0x<64-hex-tx-hash>"
 bash scripts/preflight_demo.sh .env.demo.live
 ```
@@ -74,6 +115,8 @@ Run preflight + smoke against the running server:
 For live profile:
 
 ```bash
+export WORLD_GATE_KEY="your_key"
+export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
 ./scripts/run_demo.sh ./.env.demo.live
 ./scripts/preflight_demo.sh ./.env.demo.live http://127.0.0.1:8011
 ```
@@ -87,12 +130,12 @@ These are direct commands already used during verification:
 ALLOW_FREE_JOIN=true python3 -m uvicorn app:app --host 127.0.0.1 --port 8011
 
 # Hardened run
-ALLOW_FREE_JOIN=true REQUIRE_API_KEY=true WORLD_API_KEY=devsecret RATE_LIMIT_ENABLED=true RATE_LIMIT_MAX_REQUESTS=100 RATE_LIMIT_WINDOW_SEC=60 DEBUG_ENDPOINTS_ENABLED=false python3 -m uvicorn app:app --host 127.0.0.1 --port 8011 --workers 1
+ALLOW_FREE_JOIN=true REQUIRE_API_KEY=true WORLD_GATE_KEY="$WORLD_GATE_KEY" RATE_LIMIT_ENABLED=true RATE_LIMIT_MAX_REQUESTS=100 RATE_LIMIT_WINDOW_SEC=60 DEBUG_ENDPOINTS_ENABLED=false python3 -m uvicorn app:app --host 127.0.0.1 --port 8011 --workers 1
 
 # Smoke checks
 bash -n smoke_test.sh
 ./smoke_test.sh http://127.0.0.1:8011
-SMOKE_API_KEY=devsecret ./smoke_test.sh http://127.0.0.1:8011
+SMOKE_API_KEY="$WORLD_GATE_KEY" ./smoke_test.sh http://127.0.0.1:8011
 
 # Unauthorized mutation check (should return 401 when API key is required)
 curl -sS -o /tmp/reset_no_key.json -w "%{http_code}" -X POST http://127.0.0.1:8011/reset
@@ -160,22 +203,30 @@ curl -sS -o /tmp/reset_no_key.json -w "%{http_code}" -X POST http://127.0.0.1:80
   - `0x833dD2b2c4085674E57B058126DD59235D893a2e`
 
 **How to Verify Quickly**
-1. Start server with local profile:
+1. Preferred: run one-command gate:
+   ```bash
+   export WORLD_GATE_KEY="your_key"
+   export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
+   ./scripts/demo_gate.sh live 8011
+   ```
+2. Start server with local profile:
    ```bash
    ./scripts/run_demo.sh ./.env.demo.local
    ```
-2. Run preflight + smoke:
+3. Run preflight + smoke:
    ```bash
    ./scripts/preflight_demo.sh ./.env.demo.local http://127.0.0.1:8011
    ```
-3. (Optional) Switch to live profile for token-gated join:
+4. Run live strict token-gated verification (required for bounty proof):
    ```bash
+   export WORLD_GATE_KEY="your_key"
+   export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
    ./scripts/run_demo.sh ./.env.demo.live
    ./scripts/preflight_demo.sh ./.env.demo.live http://127.0.0.1:8011
    ```
-4. Strict token-gated smoke (must include real tx hash):
+5. Strict token-gated smoke (must include real tx hash):
    ```bash
-   SMOKE_API_KEY=devsecret STRICT_TOKEN_GATE=true SMOKE_ENTRY_TX_HASH=0x2987fa5798f7f0731b0ab3d573940b00a2b5a291e941fa86e359080c14d45286 ./smoke_test.sh http://127.0.0.1:8011
+   SMOKE_API_KEY="$WORLD_GATE_KEY" STRICT_TOKEN_GATE=true SMOKE_ENTRY_TX_HASH="$SMOKE_ENTRY_TX_HASH" ./smoke_test.sh http://127.0.0.1:8011
    ```
 
 **Explainability**
@@ -184,5 +235,5 @@ curl -sS -o /tmp/reset_no_key.json -w "%{http_code}" -X POST http://127.0.0.1:80
 
 ## Notes
 
-- Freeze document: `/Users/naturalmetalgear/Documents/world_model_agent/README_FREEZE_v1.md`
+- Freeze document is a historical snapshot and may lag current run scripts: `/Users/naturalmetalgear/Documents/world_model_agent/README_FREEZE_v1.md`
 - This MVP is intentionally minimal and optimized for demo clarity, reproducibility, and judging.

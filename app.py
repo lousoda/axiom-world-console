@@ -44,6 +44,7 @@ def make_initial_world_state() -> Dict[str, Any]:
     }
 
 world_state: Dict[str, Any] = make_initial_world_state()
+WORLD_STATE_LOCK = Lock()
 
 def reset_in_place(preserve_used_tx_hashes: bool = False) -> None:
     """Очищає state без заміни dict-об’єкта (менше сюрпризів)."""
@@ -115,8 +116,8 @@ def _env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int
 
 DEBUG_ENDPOINTS_ENABLED = _env_bool("DEBUG_ENDPOINTS_ENABLED", True)
 REQUIRE_API_KEY = _env_bool("REQUIRE_API_KEY", False)
-API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-API-Key").strip() or "X-API-Key"
-WORLD_API_KEY = os.getenv("WORLD_API_KEY", "").strip()
+API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-World-Gate").strip() or "X-World-Gate"
+WORLD_GATE_KEY = os.getenv("WORLD_GATE_KEY", "").strip()
 
 RATE_LIMIT_ENABLED = _env_bool("RATE_LIMIT_ENABLED", False)
 RATE_LIMIT_MAX_REQUESTS = _to_non_negative_int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "60"), 60)
@@ -157,13 +158,13 @@ def _assert_debug_enabled() -> None:
 async def security_guard(request: Request, call_next):
     if _is_mutating_request(request):
         if REQUIRE_API_KEY:
-            if not WORLD_API_KEY:
+            if not WORLD_GATE_KEY:
                 return JSONResponse(
                     status_code=500,
-                    content={"detail": "Server misconfigured: WORLD_API_KEY is required when REQUIRE_API_KEY=true"},
+                    content={"detail": "Server misconfigured: WORLD_GATE_KEY is required when REQUIRE_API_KEY=true"},
                 )
             got = request.headers.get(API_KEY_HEADER_NAME, "")
-            if got != WORLD_API_KEY:
+            if got != WORLD_GATE_KEY:
                 return JSONResponse(status_code=401, content={"detail": f"Missing or invalid {API_KEY_HEADER_NAME}"})
 
         if RATE_LIMIT_ENABLED:
@@ -353,7 +354,39 @@ def load_world_state(path: Optional[str] = None) -> dict:
     if not isinstance(loaded, dict):
         raise HTTPException(status_code=400, detail="Snapshot world_state is invalid")
 
+    existing_used: List[str] = []
+    if not ALLOW_FREE_JOIN:
+        entry = world_state.get("entry", {})
+        used = entry.get("used_tx_hashes", []) if isinstance(entry, dict) else []
+        for h in used if isinstance(used, list) else []:
+            if not isinstance(h, str):
+                continue
+            hh = h.strip().lower()
+            if not hh.startswith("0x") or len(hh) < 10:
+                continue
+            existing_used.append(hh)
+
     normalized = _normalize_loaded_state(loaded)
+
+    if not ALLOW_FREE_JOIN and existing_used:
+        entry = normalized.setdefault("entry", {})
+        if not isinstance(entry, dict):
+            entry = {}
+            normalized["entry"] = entry
+        loaded_used = entry.get("used_tx_hashes", [])
+        merged: List[str] = []
+        seen = set()
+        for h in ((loaded_used if isinstance(loaded_used, list) else []) + existing_used):
+            if not isinstance(h, str):
+                continue
+            hh = h.strip().lower()
+            if not hh.startswith("0x") or len(hh) < 10:
+                continue
+            if hh in seen:
+                continue
+            seen.add(hh)
+            merged.append(hh)
+        entry["used_tx_hashes"] = merged
 
     world_state.clear()
     world_state.update(normalized)
@@ -405,7 +438,8 @@ def persist_save(req: PersistSaveRequest = Body(default=PersistSaveRequest())):
 
 @app.post("/persist/load")
 def persist_load(req: PersistLoadRequest = Body(default=PersistLoadRequest())):
-    return load_world_state(path=req.path)
+    with WORLD_STATE_LOCK:
+        return load_world_state(path=req.path)
 
 # ============================================================
 # MONAD MAINNET (token-gated entry)
@@ -699,64 +733,65 @@ class JoinRequest(BaseModel):
 
 @app.post("/join")
 def join(req: JoinRequest):
-    # MON token-gated entry (Monad mainnet)
-    if not ALLOW_FREE_JOIN:
-        if not req.entry_tx_hash:
-            log("entry_denied_missing_tx", {"name": req.name})
-            raise HTTPException(status_code=402, detail="Payment required: provide entry_tx_hash")
+    with WORLD_STATE_LOCK:
+        # MON token-gated entry (Monad mainnet)
+        if not ALLOW_FREE_JOIN:
+            if not req.entry_tx_hash:
+                log("entry_denied_missing_tx", {"name": req.name})
+                raise HTTPException(status_code=402, detail="Payment required: provide entry_tx_hash")
 
-        v = verify_entry_tx(req.entry_tx_hash)
-        entry = world_state.setdefault("entry", {})
-        if not isinstance(entry, dict):
-            entry = {}
-            world_state["entry"] = entry
-        used = entry.get("used_tx_hashes", [])
-        if not isinstance(used, list):
-            used = []
-            entry["used_tx_hashes"] = used
-        used.append(v["tx_hash"])
-        log(
-            "entry_verified",
-            {
-                "name": req.name,
-                "tx_hash": v["tx_hash"],
-                "from": v.get("from"),
-                "to": v.get("to"),
-                "value_wei": v.get("value_wei"),
-                "min_fee_wei": v.get("min_fee_wei"),
-                "block_number": v.get("block_number"),
-            },
-        )
+            v = verify_entry_tx(req.entry_tx_hash)
+            entry = world_state.setdefault("entry", {})
+            if not isinstance(entry, dict):
+                entry = {}
+                world_state["entry"] = entry
+            used = entry.get("used_tx_hashes", [])
+            if not isinstance(used, list):
+                used = []
+                entry["used_tx_hashes"] = used
+            used.append(v["tx_hash"])
+            log(
+                "entry_verified",
+                {
+                    "name": req.name,
+                    "tx_hash": v["tx_hash"],
+                    "from": v.get("from"),
+                    "to": v.get("to"),
+                    "value_wei": v.get("value_wei"),
+                    "min_fee_wei": v.get("min_fee_wei"),
+                    "block_number": v.get("block_number"),
+                },
+            )
 
-    agent = {
-        "id": _next_agent_id(),
-        "name": req.name,
-        "balance_mon": req.deposit_mon,
-        "pos": "spawn",
-        "status": "active",
-        "inventory": [],
-        "auto": False,
-        "cooldown_until_tick": 0,
-        "goal": "earn",
-        "entry_tx_hash": (req.entry_tx_hash or "").strip().lower() if req.entry_tx_hash else None,
-        "entry_payer": None,
-        "wallet_address": (req.wallet_address or "").strip().lower() if req.wallet_address else None,
-    }
+        agent = {
+            "id": _next_agent_id(),
+            "name": req.name,
+            "balance_mon": req.deposit_mon,
+            "pos": "spawn",
+            "status": "active",
+            "inventory": [],
+            "auto": False,
+            "cooldown_until_tick": 0,
+            "goal": "earn",
+            "entry_tx_hash": (req.entry_tx_hash or "").strip().lower() if req.entry_tx_hash else None,
+            "entry_payer": None,
+            "wallet_address": (req.wallet_address or "").strip().lower() if req.wallet_address else None,
+        }
 
-    if not ALLOW_FREE_JOIN and req.entry_tx_hash:
-        try:
-            logs_list = world_state.get("logs", [])
-            if isinstance(logs_list, list) and len(logs_list) > 0:
-                last = logs_list[-1]
-                if isinstance(last, dict) and last.get("event") == "entry_verified":
-                    data = last.get("data") if isinstance(last.get("data"), dict) else {}
-                    agent["entry_payer"] = data.get("from")
-        except Exception:
-            pass
+        if not ALLOW_FREE_JOIN and req.entry_tx_hash:
+            try:
+                logs_list = world_state.get("logs", [])
+                if isinstance(logs_list, list) and len(logs_list) > 0:
+                    last = logs_list[-1]
+                    if isinstance(last, dict) and last.get("event") == "entry_verified":
+                        data = last.get("data") if isinstance(last.get("data"), dict) else {}
+                        agent["entry_payer"] = data.get("from")
+            except Exception:
+                pass
 
-    world_state["agents"].append(agent)
-    log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
-    return {"ok": True, "agent": agent}
+        world_state["agents"].append(agent)
+        log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
+        return {"ok": True, "agent": agent}
 
 # ============================================================
 # ACTION
@@ -1092,71 +1127,74 @@ def tick(steps: int = Query(1, ge=1, le=100)):
 
 @app.post("/reset")
 def reset():
-    reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
-    log("reset", {"ok": True})
-    return {"ok": True, "tick": world_state["tick"]}
+    with WORLD_STATE_LOCK:
+        reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
+        log("reset", {"ok": True})
+        return {"ok": True, "tick": world_state["tick"]}
 
 
 @app.post("/scenario/basic")
 def scenario_basic():
-    reset_in_place()
+    with WORLD_STATE_LOCK:
+        reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
 
-    agents = [
-        {"name": "alice", "deposit_mon": 10},
-        {"name": "bob", "deposit_mon": 2},
-        {"name": "charlie", "deposit_mon": 0},
-    ]
+        agents = [
+            {"name": "alice", "deposit_mon": 10},
+            {"name": "bob", "deposit_mon": 2},
+            {"name": "charlie", "deposit_mon": 0},
+        ]
 
-    for a in agents:
-        agent = {
-            "id": _next_agent_id(),
-            "name": a["name"],
-            "balance_mon": a["deposit_mon"],
-            "pos": "spawn",
-            "status": "active",
-            "inventory": [],
-            "auto": False,
-            "cooldown_until_tick": 0,
-            "goal": "earn",
-        }
-        world_state["agents"].append(agent)
-        log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
+        for a in agents:
+            agent = {
+                "id": _next_agent_id(),
+                "name": a["name"],
+                "balance_mon": a["deposit_mon"],
+                "pos": "spawn",
+                "status": "active",
+                "inventory": [],
+                "auto": False,
+                "cooldown_until_tick": 0,
+                "goal": "earn",
+            }
+            world_state["agents"].append(agent)
+            log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
 
-    log("scenario_loaded", {"name": "basic", "agents": len(world_state["agents"])})
-    return {"ok": True, "scenario": "basic", "agents": world_state["agents"]}
+        log("scenario_loaded", {"name": "basic", "agents": len(world_state["agents"])})
+        return {"ok": True, "scenario": "basic", "agents": world_state["agents"]}
 
 # === Inserted new auto-enabled scenario endpoint ===
 @app.post("/scenario/basic_auto")
 def scenario_basic_auto():
     """Load the basic scenario and enable autonomy by default (demo-friendly)."""
-    reset_in_place()
+    with WORLD_STATE_LOCK:
+        reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
 
-    agents = [
-        {"name": "alice", "deposit_mon": 10, "goal": "earn", "auto": True},
-        {"name": "bob", "deposit_mon": 2, "goal": "wander", "auto": True},
-        {"name": "charlie", "deposit_mon": 0, "goal": "earn", "auto": True},
-    ]
+        agents = [
+            {"name": "alice", "deposit_mon": 10, "goal": "earn", "auto": True},
+            {"name": "bob", "deposit_mon": 2, "goal": "wander", "auto": True},
+            {"name": "charlie", "deposit_mon": 0, "goal": "earn", "auto": True},
+        ]
 
-    for a in agents:
-        agent = {
-            "id": _next_agent_id(),
-            "name": a["name"],
-            "balance_mon": a["deposit_mon"],
-            "pos": "spawn",
-            "status": "active",
-            "inventory": [],
-            "auto": bool(a.get("auto", False)),
-            "cooldown_until_tick": 0,
-            "goal": a.get("goal", "earn"),
-        }
-        world_state["agents"].append(agent)
-        log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
-        if agent["auto"]:
-            log("auto_enabled", {"agent_id": agent["id"]})
-        log("goal_set", {"agent_id": agent["id"], "goal": agent["goal"]})
+        for a in agents:
+            agent = {
+                "id": _next_agent_id(),
+                "name": a["name"],
+                "balance_mon": a["deposit_mon"],
+                "pos": "spawn",
+                "status": "active",
+                "inventory": [],
+                "auto": bool(a.get("auto", False)),
+                "cooldown_until_tick": 0,
+                "goal": a.get("goal", "earn"),
+            }
+            world_state["agents"].append(agent)
+            log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
+            if agent["auto"]:
+                log("auto_enabled", {"agent_id": agent["id"]})
+            log("goal_set", {"agent_id": agent["id"], "goal": agent["goal"]})
 
-    log("scenario_loaded", {"name": "basic_auto", "agents": len(world_state["agents"])})
-    return {"ok": True, "scenario": "basic_auto", "agents": world_state["agents"]}
+        log("scenario_loaded", {"name": "basic_auto", "agents": len(world_state["agents"])})
+        return {"ok": True, "scenario": "basic_auto", "agents": world_state["agents"]}
 
 @app.get("/metrics")
 def metrics():

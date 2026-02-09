@@ -25,10 +25,23 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
 fi
 
+# Preserve explicit shell exports so env-file defaults do not override them.
+EXPORTED_WORLD_GATE_KEY="${WORLD_GATE_KEY-}"
+EXPORTED_API_KEY_HEADER_NAME="${API_KEY_HEADER_NAME-}"
+
 set -a
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 set +a
+
+if [ -n "$EXPORTED_WORLD_GATE_KEY" ]; then
+  WORLD_GATE_KEY="$EXPORTED_WORLD_GATE_KEY"
+  export WORLD_GATE_KEY
+fi
+if [ -n "$EXPORTED_API_KEY_HEADER_NAME" ]; then
+  API_KEY_HEADER_NAME="$EXPORTED_API_KEY_HEADER_NAME"
+  export API_KEY_HEADER_NAME
+fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 [ -f "$ROOT_DIR/smoke_test.sh" ] || fail "smoke_test.sh is missing"
@@ -44,9 +57,10 @@ bash -n "$0"
 : "${RATE_LIMIT_MAX_REQUESTS:=100}"
 : "${RATE_LIMIT_WINDOW_SEC:=60}"
 : "${MONAD_CHAIN_ID:=143}"
+: "${API_KEY_HEADER_NAME:=X-World-Gate}"
 
-if [ "$REQUIRE_API_KEY" = "true" ] && [ -z "${WORLD_API_KEY:-}" ]; then
-  fail "REQUIRE_API_KEY=true but WORLD_API_KEY is empty"
+if [ "$REQUIRE_API_KEY" = "true" ] && [ -z "${WORLD_GATE_KEY:-}" ]; then
+  fail "REQUIRE_API_KEY=true but WORLD_GATE_KEY is empty"
 fi
 
 if [ "$ALLOW_FREE_JOIN" != "true" ]; then
@@ -103,11 +117,21 @@ fi
 health_code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE_URL/" || true)
 [ "$health_code" = "200" ] || fail "Server health check failed at $BASE_URL/ (HTTP $health_code). Start server first."
 
+SMOKE_STRICT_TOKEN_GATE="false"
+if [ "$ALLOW_FREE_JOIN" != "true" ]; then
+  [ -n "${SMOKE_ENTRY_TX_HASH:-}" ] || fail "ALLOW_FREE_JOIN=false requires SMOKE_ENTRY_TX_HASH for strict token-gated preflight"
+  SMOKE_STRICT_TOKEN_GATE="true"
+fi
+
 if [ "$REQUIRE_API_KEY" = "true" ]; then
-  SMOKE_API_KEY="${WORLD_API_KEY}" \
-  SMOKE_API_KEY_HEADER="${API_KEY_HEADER_NAME:-X-API-Key}" \
+  SMOKE_API_KEY="${WORLD_GATE_KEY}" \
+  SMOKE_API_KEY_HEADER="${API_KEY_HEADER_NAME:-X-World-Gate}" \
+  STRICT_TOKEN_GATE="${SMOKE_STRICT_TOKEN_GATE}" \
+  SMOKE_ENTRY_TX_HASH="${SMOKE_ENTRY_TX_HASH:-}" \
   "$ROOT_DIR/smoke_test.sh" "$BASE_URL"
 else
+  STRICT_TOKEN_GATE="${SMOKE_STRICT_TOKEN_GATE}" \
+  SMOKE_ENTRY_TX_HASH="${SMOKE_ENTRY_TX_HASH:-}" \
   "$ROOT_DIR/smoke_test.sh" "$BASE_URL"
 fi
 

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 BASE="${1:-http://127.0.0.1:8001}"
-AUTH_HEADER_NAME="${SMOKE_API_KEY_HEADER:-X-API-Key}"
+AUTH_HEADER_NAME="${SMOKE_API_KEY_HEADER:-X-World-Gate}"
 STRICT_TOKEN_GATE="$(printf '%s' "${STRICT_TOKEN_GATE:-false}" | tr '[:upper:]' '[:lower:]')"
 
 # Optional: load env vars from .env (so you can set SMOKE_ENTRY_TX_HASH there)
@@ -145,7 +145,7 @@ elif [ "$JOIN_STATUS" = "402" ]; then
   fi
 elif [ "$JOIN_STATUS" = "401" ]; then
   echo "POST /join -> 401 Unauthorized"
-  echo "Hint: set SMOKE_API_KEY (and optionally SMOKE_API_KEY_HEADER, default X-API-Key)."
+  echo "Hint: set SMOKE_API_KEY (and optionally SMOKE_API_KEY_HEADER, default X-World-Gate)."
   cat "$JOIN_RESP"
   fail "join unauthorized"
 elif [ "$JOIN_STATUS" = "500" ]; then

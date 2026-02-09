@@ -1,8 +1,11 @@
 import json
 import os
 import tempfile
+import asyncio
 
 from fastapi import HTTPException
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 import sys
 from pathlib import Path
@@ -197,6 +200,112 @@ def test_token_gated_replay_persists_across_reset():
         assert "already used" in str(e.detail)
     finally:
         app.verify_entry_tx = prev_verify
+        app.ALLOW_FREE_JOIN = prev_allow
+
+def test_token_gated_scenarios_preserve_replay_hashes():
+    prev_allow = app.ALLOW_FREE_JOIN
+    app.ALLOW_FREE_JOIN = False
+    txh = "0x" + "a" * 64
+
+    try:
+        app.reset_in_place(preserve_used_tx_hashes=True)
+        app.world_state.setdefault("entry", {})["used_tx_hashes"] = [txh]
+        app.scenario_basic()
+        used_after_basic = app.world_state.get("entry", {}).get("used_tx_hashes", [])
+        assert txh in [str(x).lower() for x in used_after_basic if isinstance(x, str)]
+
+        app.world_state.setdefault("entry", {})["used_tx_hashes"] = [txh]
+        app.scenario_basic_auto()
+        used_after_basic_auto = app.world_state.get("entry", {}).get("used_tx_hashes", [])
+        assert txh in [str(x).lower() for x in used_after_basic_auto if isinstance(x, str)]
+    finally:
+        app.ALLOW_FREE_JOIN = prev_allow
+
+def test_token_gated_load_keeps_existing_replay_hashes():
+    prev_allow = app.ALLOW_FREE_JOIN
+    app.ALLOW_FREE_JOIN = False
+    txh = "0x" + "b" * 64
+    path = None
+
+    ws = {
+        "tick": 0,
+        "locations": ["spawn", "market", "workshop"],
+        "agents": [],
+        "action_queue": [],
+        "logs": [],
+        "economy": {"workshop_capacity_per_tick": 1, "workshop_capacity_left": 1},
+        "entry": {"used_tx_hashes": []},
+    }
+
+    try:
+        path = _write_snapshot(ws)
+        app.reset_in_place(preserve_used_tx_hashes=True)
+        app.world_state.setdefault("entry", {})["used_tx_hashes"] = [txh]
+        app.load_world_state(path)
+        used_after_load = app.world_state.get("entry", {}).get("used_tx_hashes", [])
+        assert txh in [str(x).lower() for x in used_after_load if isinstance(x, str)]
+    finally:
+        app.ALLOW_FREE_JOIN = prev_allow
+        if path:
+            Path(path).unlink(missing_ok=True)
+
+def test_world_gate_header_enforced_for_join():
+    prev_require = app.REQUIRE_API_KEY
+    prev_header = app.API_KEY_HEADER_NAME
+    prev_gate_key = app.WORLD_GATE_KEY
+    prev_allow = app.ALLOW_FREE_JOIN
+
+    app.reset_in_place()
+
+    try:
+        app.REQUIRE_API_KEY = True
+        app.API_KEY_HEADER_NAME = "X-World-Gate"
+        app.WORLD_GATE_KEY = "test-world-gate-key"
+        app.ALLOW_FREE_JOIN = True
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope_no_header = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/join",
+            "raw_path": b"/join",
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_no_header = Request(scope_no_header)
+        no_header = asyncio.run(app.security_guard(req_no_header, ok_next))
+        assert no_header.status_code == 401
+        assert "Missing or invalid X-World-Gate" in no_header.body.decode("utf-8")
+
+        scope_with_header = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/join",
+            "raw_path": b"/join",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"x-world-gate", b"test-world-gate-key"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_with_header = Request(scope_with_header)
+        ok = asyncio.run(app.security_guard(req_with_header, ok_next))
+        assert ok.status_code == 200
+        assert ok.body.decode("utf-8") == '{"ok":true}'
+    finally:
+        app.REQUIRE_API_KEY = prev_require
+        app.API_KEY_HEADER_NAME = prev_header
+        app.WORLD_GATE_KEY = prev_gate_key
         app.ALLOW_FREE_JOIN = prev_allow
 
 
