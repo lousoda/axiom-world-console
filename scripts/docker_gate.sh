@@ -60,7 +60,7 @@ log "Starting profile '$PROFILE' on $BASE_URL"
 DEMO_ENV_FILE=".env.demo.${PROFILE}" PORT="$PORT" docker compose up --build -d
 
 for _ in $(seq 1 60); do
-  code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE_URL/" || true)
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/" 2>/dev/null || true)
   if [ "$code" = "200" ]; then
     break
   fi
