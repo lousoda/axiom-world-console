@@ -39,6 +39,42 @@ Allowed observer interactions:
 5. Visual direction is dark, forensic graph-console oriented, with strong contrast between calm background and dense node masses.
 6. Node bodies should feel volumetric and physically weighted, not flat icons.
 
+## 4.3) Dreamcore Optics (Observer Channel Only)
+
+Dreamcore here is a restrained optics layer, not a genre shift.
+The system remains deterministic; only the observer channel is softened.
+
+Intent:
+
+1. quiet tension,
+2. delayed clarity,
+3. stable trust under imperfect perception.
+
+Allowed optics (low intensity, optional):
+
+1. fine monochrome grain,
+2. soft vignette framing,
+3. wide soft bloom (non-neon),
+4. very low chromatic aberration near viewport edges.
+
+Rules:
+
+1. readability always wins,
+2. effects must be felt before noticed,
+3. optics must never suggest randomness in system behavior,
+4. no playful/game-like treatment.
+
+## 4.4) State-Mass Visual References (Interpretation)
+
+From reference boards, preserve pattern-level cues only:
+
+1. dense central concentration + sparse peripheral ring,
+2. micro-point internal structure (not flat fills),
+3. multi-cluster field impression with secondary links,
+4. muted dark background with restrained contrast.
+
+Do not copy exact composition, palette identity, or branded look.
+
 ## 4.1) State-Field Node Model (Visual + Semantic)
 
 1. Nodes are localized state concentrations, not entities.
@@ -73,6 +109,15 @@ If nodes start to read as characters, apply these corrections:
 3. Trace labels:
    - `Deferred Trace`
    - `Explainability Trace`
+
+## 6.1) Console Artifact (Optional)
+
+The UI may include one soft console artifact (marker/seal/cue) with these limits:
+
+1. belongs to console, not to world simulation,
+2. no causal meaning,
+3. no interaction requirements,
+4. low prominence.
 
 ## 7) UX Outcome (Judge-Oriented)
 

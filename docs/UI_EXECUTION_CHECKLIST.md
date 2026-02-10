@@ -28,6 +28,27 @@ Backend behavior is frozen and must not be changed.
 3. Avoid new libraries unless strictly necessary for delivery.
 4. Do not add animation frameworks or heavy visual effects.
 
+## 2.3) Dreamcore Optics Guardrails
+
+Optics are allowed only as observer-channel treatment and must stay subtle.
+
+Allowed:
+
+1. monochrome grain,
+2. soft vignette,
+3. non-neon bloom,
+4. minimal chromatic aberration near viewport boundaries.
+
+Not allowed:
+
+1. effect-heavy/glitch styling,
+2. readability loss in panels or controls,
+3. animated effects that imply non-deterministic system behavior.
+
+Acceptance rule:
+
+1. if an effect is noticeable before meaningful, reduce intensity.
+
 ## 2.1) Baseline File Structure
 
 ```text
@@ -192,9 +213,15 @@ Exit criteria:
 6. Add subtle inertial movement so node masses feel alive but stable (no playful bounce).
 7. Prioritize mass/density impression over geometric shape readability.
 8. Inertial drift is visual-only and stable (seeded per node), never implying agency or randomness.
+9. Include optional optics pass:
+   - subtle viewport grain
+   - soft vignette
+   - extremely low chromatic offset on outer mass boundary only
+10. If node masses begin to read like characters, reduce symmetry and center contrast.
 
 Exit criteria:
 1. Visual identity feels stable, quiet, and technical.
+2. Dreamcore optics remain subordinate to readability.
 
 ### Phase 6 — Judge Flow Overlay (Optional)
 
