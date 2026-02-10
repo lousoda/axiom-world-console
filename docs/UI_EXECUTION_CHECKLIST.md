@@ -1,84 +1,243 @@
-# UI Execution Checklist (Freeze-Safe)
+# UI Execution Checklist (World Console)
 
-This is the practical implementation checklist for UI delivery after backend freeze.
+This file is the practical implementation checklist for the UI layer.
+Backend behavior is frozen and must not be changed.
 
-## 1) Non-Negotiable Rules
+## 1) Hard Constraints (Non-Negotiable)
 
-1. Do not change backend core logic in `app.py` for UI work.
-2. Preserve deterministic backend operations and current auth protocol.
-3. No scope expansion beyond current MVP mechanics in this phase.
-4. UI must be understandable by judges without terminal usage.
+1. UI is an observation interface, not a direct control dashboard.
+2. UI must not expose `step`, `tick`, `x1`, `x10` wording.
+3. UI must use FLOW controls only:
+   - `LIVE`
+   - `PAUSE`
+   - `ACCELERATE`
+4. Internal calls to `/auto/tick` are allowed, but endpoint naming must stay hidden in UI copy.
+5. Do not expose direct agent action controls:
+   - no `/act`
+   - no `/market/buy`
+6. Allowed user interactions in UI:
+   - scenario load
+   - FLOW modulation
+7. Use existing backend endpoints only.
+8. Preserve deterministic trust and explainability.
 
-## 2) Scope: Must / Should / Bonus
+## 2) Fixed Stack
 
-### Must (submission-critical)
+1. Frontend: React (Vite), `vis-network`, HTML canvas for custom node rendering.
+2. Backend: existing FastAPI endpoints only.
+3. Avoid new libraries unless strictly necessary for delivery.
+4. Do not add animation frameworks or heavy visual effects.
 
-1. Single-page UI in `ui/`.
-2. Auth key input for `X-World-Gate`.
-3. Graph panel (agents + locations, agent->location edges).
-4. Controls:
-   - `Load basic_auto`
-   - `Auto tick x1`
-   - `Auto tick x10`
-   - `Refresh`
-5. Sidebar sections:
-   - `/world` snapshot
-   - `/explain/recent` lines
-6. Polling loop at `500-1000ms` with safe error handling.
-7. Visible status badges for:
-   - `OK`
-   - `401 Unauthorized`
-   - `402 Payment required`
-   - `409 Replay blocked`
-   - `429 Rate-limited`
+## 2.1) Baseline File Structure
 
-### Should (strongly recommended)
+```text
+/ui
+  /src
+    /api
+      client.ts
+    /flow
+      flowController.ts
+      flowPolicy.ts
+    /model
+      stateFieldMapper.ts
+      traceNormalizer.ts
+    /graph
+      GraphView.tsx
+      graphAdapter.ts
+      NodeRenderer.ts
+    /panels
+      WorldPanel.tsx
+      TracePanel.tsx
+      ExplainPanel.tsx
+      StatusBadges.tsx
+    /copy
+      vocabulary.ts
+    /types
+      index.ts
+    /styles
+      theme.css
+    App.tsx
+    main.tsx
+```
 
-1. Event highlighting in graph for recent actions.
-2. Simple loading/disabled states on action buttons.
-3. Backoff when receiving `429`.
-4. Compact "Judge flow" instructions on-screen.
+## 2.2) Tool Responsibilities
 
-### Bonus (only if time remains)
+1. React:
+   - layout
+   - tabs
+   - panels
+   - FLOW controls
+2. vis-network:
+   - graph layout
+   - node positioning
+   - edge routing
+3. HTML canvas:
+   - node body rendering only (density, structure, weight)
+   - no control widgets, no panel text
+4. CSS:
+   - tone
+   - spacing rhythm
+   - restrained visual hierarchy
 
-1. Transfer event edge visualization.
-2. Small timeline strip for recent decisions.
-3. Themed motion polish (without heavy dependencies).
+## 3) Canonical UI Terms (Must Use)
 
-## 3) Delivery Phases and Timing
+1. UI name: `World Console`
+2. Tabs:
+   - `WORLD`
+   - `TRACE`
+   - `EXPLAIN`
+   - `STATUS` (optional)
+3. Graph semantics:
+   - `State Nodes`
+   - `Influence Edges`
+4. Trace naming:
+   - `Deferred Trace`
+   - `Explainability Trace`
+5. Whisper vocabulary:
+   - `inertia`
+   - `pressure`
+   - `latency`
+   - `threshold`
+   - `drift`
+   - `convergence`
+   - `resistance`
+   - `imbalance`
 
-1. Phase A (1-2h): Scaffold UI project and wire API client.
-2. Phase B (3-4h): Implement controls + world/explain panels + graph rendering.
-3. Phase C (2-3h): UX polish, status handling, rate-limit-safe polling.
-4. Phase D (1-2h): Manual QA gate and freeze.
+## 4) Forbidden UI Language
 
-## 4) Technical Decision (Current)
+1. Anthropomorphic phrasing:
+   - avoid "agent thinks/wants/decides"
+2. Game framing:
+   - avoid game-like wording or command fantasy
+3. Lore/marketing prose:
+   - keep text technical, concise, forensic
 
-Use `React + vis-network` for balance of speed, stability, and maintainability.
+## 5) Phase-by-Phase Plan
 
-## 5) QA Gates Before UI Freeze
+### Phase 1 — Scaffold
 
-1. Local UI can run and connect to backend.
-2. Core judge flow works from UI:
-   - load scenario
-   - tick x1 / x10
-   - observe graph and explain logs update
-3. No JS runtime crashes in browser console during 10-minute run.
-4. API not flooded:
-   - polling stays within configured rate limits
-   - `429` handled gracefully
-5. Existing backend tests and scripts remain green.
+1. Create React app under `ui/` (Vite).
+2. Build single-page layout.
+3. Top bar includes:
+   - API Base URL input
+   - `X-World-Gate` input
+   - `Connect/Test` button (`GET /metrics`)
+4. Add status badges for:
+   - `200`
+   - `401`
+   - `402`
+   - `409`
+   - `429`
+5. No graph polish in this phase.
 
-## 6) Risk Controls
+Exit criteria:
+1. UI can connect and report status codes correctly.
 
-1. Keep mutating actions operator-driven from UI controls only.
-2. Keep Fly API as source of truth; do not alter key protocol.
-3. Do not introduce new backend endpoints in this phase.
-4. If UI is blocked by CORS/domain issues, use same-origin proxy strategy.
+### Phase 2 — Flow Engine
+
+1. Implement FLOW modes:
+   - `PAUSE`: no loop
+   - `LIVE`: ~900ms loop
+   - `ACCELERATE`: ~300ms loop
+2. Loop sequence:
+   - `POST /auto/tick`
+   - `GET /world`
+   - `GET /metrics`
+   - `GET /logs` (recent)
+   - `GET /explain/recent` (reduced cadence)
+3. Stop FLOW on `401`, `402`, `409`.
+4. Backoff strategy on `429`.
+5. Guarantee only one loop instance runs at a time.
+
+Exit criteria:
+1. Flow is stable for 10 minutes without race behavior.
+
+### Phase 3 — World Console Layout
+
+1. Tabs: `WORLD`, `TRACE`, `EXPLAIN`.
+2. `WORLD` tab:
+   - central graph
+   - side snapshot panels for `/world` and `/metrics`
+   - optional whisper overlay
+3. `TRACE` tab:
+   - `Deferred Trace` from `/logs`
+   - newest first, compact view
+4. `EXPLAIN` tab:
+   - `Explainability Trace` from `/explain/recent`
+   - structured forensic readability
+
+Exit criteria:
+1. Judge can observe state evolution without extra clicks.
+
+### Phase 4 — Graph Semantics
+
+1. Use `vis-network` layout.
+2. Represent state-field, not characters/entities.
+3. Node labels should be restrained and non-anthropomorphic.
+4. Edges are secondary and influence-oriented.
+
+Exit criteria:
+1. Graph reads as system state, not character UI.
+
+### Phase 5 — Node Visual Mass (Canvas)
+
+1. Add custom canvas node rendering.
+2. Node visual qualities:
+   - dense
+   - asymmetrical
+   - heavier core, lighter perimeter
+3. Keep palette muted (2-3 palettes max).
+4. Avoid flashy animation.
+5. Show time via gradual densification, not spectacle.
+6. Add subtle inertial movement so node masses feel alive but stable (no playful bounce).
+7. Prioritize mass/density impression over geometric shape readability.
+8. Inertial drift is visual-only and stable (seeded per node), never implying agency or randomness.
+
+Exit criteria:
+1. Visual identity feels stable, quiet, and technical.
+
+### Phase 6 — Judge Flow Overlay (Optional)
+
+1. WORLD tab overlay with max 4 steps:
+   - Load scenario
+   - Set FLOW to LIVE
+   - Observe inertia and constraints
+   - Open TRACE / EXPLAIN
+2. Overlay is hideable.
+3. Wording remains neutral and technical.
+
+Exit criteria:
+1. A new observer can understand the demo path in under 2 minutes.
+
+## 6) Allowed Endpoint Surface for UI
+
+1. Required:
+   - `GET /world`
+   - `GET /metrics`
+   - `GET /logs`
+   - `GET /explain/recent`
+   - `POST /scenario/basic_auto`
+   - `POST /auto/tick`
+2. Optional (advanced read-only):
+   - `GET /explain/agent/{id}`
+   - `GET /agents/{id}`
+3. Not exposed in UI controls:
+   - `POST /act`
+   - `POST /market/buy`
 
 ## 7) Definition of Done
 
-1. UI shows autonomy, constraints, and adaptation in under 2 minutes.
-2. UI works with current deployed API and auth model.
-3. README links to UI run instructions.
-4. UI changes are isolated from backend core behavior.
+UI is done when all are true:
+1. FLOW modes are reliable.
+2. World evolution is visible without repetitive user action.
+3. Nodes read as state concentrations, not characters.
+4. TRACE and EXPLAIN provide delayed clarity.
+5. Forbidden wording does not appear in UI copy.
+6. Judge can infer autonomy and constraints in ~2 minutes.
+
+## 8) Execution Discipline
+
+1. Implement in small, confirmable steps.
+2. Stop for confirmation after each phase.
+3. If concept and implementation conflict, concept wins.
+4. If a change risks backend stability, do not proceed without explicit approval.

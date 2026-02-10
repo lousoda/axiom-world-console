@@ -1,60 +1,107 @@
-# UI Product Plan (Post-Freeze, Low-Risk)
+# UI Product Plan (World Console Narrative)
 
-This plan defines what to add after backend freeze and when to do it while preserving a clear world-model identity.
+This file defines the conceptual narrative and product identity for the UI layer.
+Implementation details are tracked in `docs/UI_EXECUTION_CHECKLIST.md`.
 
-## 1) Scope and Constraints
+## 1) Product Intent
 
-- Backend core is frozen. Do not change `app.py` logic for UI delivery.
-- Keep deterministic demo behavior and current auth flow (`WORLD_GATE_KEY` + `X-World-Gate`).
-- Build UI as a separate product layer, not as a rewrite of backend behavior.
-- Do not introduce additional gameplay systems outside current MVP scope in this phase.
+The UI is a world observation interface for a deterministic system.
+It must demonstrate:
 
-## 2) What We Intentionally Reuse (Pattern-Level)
+1. autonomy under constraints,
+2. delayed explainability through traces,
+3. confidence in stable, rule-bound evolution.
 
-- Judge-first flow: one clear path from start to meaningful output.
-- High observability: world snapshot, explain logs, and recent activity visible at once.
-- Explicit error UX for `401`, `402`, and `409` so judges understand why a request failed.
-- Quickstart framing: minimal steps to reproduce core behavior.
+The UI is not a game interface and not a manual control board.
 
-## 3) What We Explicitly Do Not Reuse
+## 2) Narrative Pillars
 
-- No expansion into combat/faction systems in this phase.
-- No copy of visual identity, layout composition, wording, or naming.
-- No feature creep into game systems before submission pack is complete.
+1. Stability as strength, not stagnation.
+2. Autonomy as persistence under rules.
+3. Explainability as forensic reconstruction after events.
+4. Time as an active force in world evolution.
 
-## 4) Timing (When to Do What)
+## 3) Observer Role
 
-1. Phase A (now): backend freeze validation and ops discipline only.
-2. Phase B (next): UI v1 graph-view with existing endpoints.
-3. Phase C (after UI v1): submission pack (video, form, public repo links).
-4. Phase D (only if time remains): optional experiments in a separate branch (`x402`, extra scenario, contract spike).
+The user is an observer, not a puppeteer.
+The world evolves primarily through system flow, not direct user micromanagement.
 
-## 5) UI v1 Definition (1-day target)
+Allowed observer interactions:
+1. load scenario,
+2. modulate FLOW (`LIVE`, `PAUSE`, `ACCELERATE`).
 
-- Single page in `ui/` with graph-view of agents and locations.
-- Controls: `scenario/basic_auto`, `auto/tick x1`, `auto/tick x10`.
-- Panels: world snapshot and `/explain/recent`.
-- Polling refresh every `500-1000ms`.
-- Auth input field for `X-World-Gate` key.
+## 4) Visual Philosophy
 
-## 6) Anti-Copy Check (Before and After UI Draft)
+1. Graph should read as state-field, not cast of characters.
+2. State Nodes should feel dense, accumulated, and non-uniform.
+3. Influence Edges are secondary; they hint at flow, not explicit narrative.
+4. Motion should be restrained and meaningful.
+5. Visual direction is dark, forensic graph-console oriented, with strong contrast between calm background and dense node masses.
+6. Node bodies should feel volumetric and physically weighted, not flat icons.
 
-1. Compare hero/intro text: must describe deterministic world model and explainable autonomy.
-2. Compare component layout: must differ in hierarchy and section structure.
-3. Compare design language: independent typography, colors, and iconography.
-4. Compare naming: use your own terms for flows and controls.
-5. Compare feature claims: keep only features implemented in your backend.
+## 4.1) State-Field Node Model (Visual + Semantic)
 
-## 7) Decision Gate Before Optional Integrations
+1. Nodes are localized state concentrations, not entities.
+2. Each node must appear memory-bearing and inertial.
+3. Node surfaces should show internal density structure, not a single-color fill.
+4. Time should be perceived as gradual densification/weight shift, not as explicit timeline UI.
+5. Node motion should be subtle and continuous (drift), avoiding jitter and spectacle.
+6. If any visual choice makes nodes read like characters, reduce semantic detail and increase abstraction.
 
-Proceed to optional integrations only if all are true:
+### 4.2) Abstraction Safety Micro-Checklist
 
-1. Backend gates pass (`pytest`, local/live gates, Fly matrix).
-2. UI v1 is usable by a new person without terminal knowledge.
-3. Submission artifacts are ready (public repo, video, runbook links).
+If nodes start to read as characters, apply these corrections:
 
-## 8) Discussion Questions for Team/GPT
+1. Reduce labels and remove icon-like markers.
+2. Remove face-like symmetry and soften center contrast.
+3. De-emphasize edges further so node mass remains primary.
 
-1. Is UI v1 enough to make autonomy and explainability obvious in under 2 minutes?
-2. Should optional scope be `x402` or a controlled extra scenario first?
-3. Can optional changes be isolated in a separate branch without risking demo stability?
+## 5) Language Philosophy
+
+1. Tone: technical, forensic, concise.
+2. Avoid anthropomorphism.
+3. Avoid lore-heavy text and marketing voice.
+4. Use precise status communication and restrained copy.
+
+## 6) Canonical Labels
+
+1. Product label: `World Console`
+2. Tabs:
+   - `WORLD`
+   - `TRACE`
+   - `EXPLAIN`
+3. Trace labels:
+   - `Deferred Trace`
+   - `Explainability Trace`
+
+## 7) UX Outcome (Judge-Oriented)
+
+Within ~2 minutes, a judge should be able to infer:
+1. the system keeps evolving without manual command chains,
+2. constraints are real and visible,
+3. traces explain what happened after the fact.
+
+## 8) Scope Boundaries
+
+1. Backend behavior is frozen.
+2. No backend feature expansion for UI polish.
+3. Optional integrations (`x402`, extra scenario, contract spike) are separate post-UI decisions.
+
+## 9) Anti-Copy Guardrail
+
+Reuse only pattern-level strengths:
+1. clarity of flow,
+2. observability density,
+3. concise judge path.
+
+Do not copy external identity:
+1. no borrowed wording,
+2. no borrowed composition,
+3. no borrowed visual language.
+
+## 10) Decision Gate Before Optional Work
+
+Proceed to optional work only if all are true:
+1. UI execution checklist is complete.
+2. Backend and ops gates remain green.
+3. Submission materials are ready.
