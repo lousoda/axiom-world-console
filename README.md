@@ -62,7 +62,10 @@ Operational / generated artifacts:
 - Risk register: `docs/DEMO_RISK_REGISTER.md`
 - Runbook: `docs/DEMO_RUNBOOK.md`
 - Ops checklist (single source for operator notes + sanity commands): `docs/OPS_CHECKLIST.md`
+- UI/product differentiation plan (post-freeze): `docs/UI_PRODUCT_PLAN.md`
+- UI execution checklist (must/should/bonus + QA gates): `docs/UI_EXECUTION_CHECKLIST.md`
 - One-command gate: `scripts/demo_gate.sh`
+- `Refresh`
 
 Quick gate runs:
 
