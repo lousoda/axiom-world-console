@@ -37,6 +37,10 @@ const FLOW_LIMIT_AGENTS = 50
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN"
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
 function loadStorageValue(key: string, fallback: string): string {
   if (typeof window === "undefined") {
     return fallback
@@ -98,19 +102,18 @@ function App() {
   const [isTesting, setIsTesting] = useState<boolean>(false)
   const [isScenarioLoading, setIsScenarioLoading] = useState<boolean>(false)
   const [isFlowRunning, setIsFlowRunning] = useState<boolean>(false)
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false)
 
   const [flowMode, setFlowMode] = useState<FlowMode>("PAUSE")
   const [flowCycles, setFlowCycles] = useState<number>(0)
   const [flowBackoffMs, setFlowBackoffMs] = useState<number>(0)
   const [activeTab, setActiveTab] = useState<ConsoleTab>("WORLD")
   const [flowNote, setFlowNote] = useState<string>(
-    "FLOW is paused. Select LIVE or ACCELERATE to begin.",
+    "FLOW paused. Select LIVE or ACCELERATE to begin.",
   )
 
   const [lastStatus, setLastStatus] = useState<number | null>(null)
-  const [lastMessage, setLastMessage] = useState<string>(
-    "No connection test performed yet.",
-  )
+  const [lastMessage, setLastMessage] = useState<string>("No probe yet.")
   const [statusHits, setStatusHits] = useState<Record<ObservedCode, number>>({
     200: 0,
     401: 0,
@@ -153,9 +156,9 @@ function App() {
 
   const statusSummary = useMemo(() => {
     if (lastStatus === null) {
-      return "No status"
+      return "Status: idle"
     }
-    return `Last status: ${lastStatus}`
+    return `Status: ${lastStatus}`
   }, [lastStatus])
 
   async function handleProbeClick() {
@@ -164,7 +167,7 @@ function App() {
     }
 
     setIsTesting(true)
-    setLastMessage("Probing /metrics ...")
+    setLastMessage("Probing metrics...")
 
     try {
       const result = await probeMetrics(baseUrl, gateKey)
@@ -174,13 +177,13 @@ function App() {
 
       const message =
         result.status === 200
-          ? "Metrics endpoint reachable."
+          ? "Metrics link verified."
           : bodyPreview(result.rawText)
       recordStatus(result.status, message)
     } catch (error) {
       setLastStatus(null)
       setLastMessage(
-        error instanceof Error ? error.message : "Unknown probe error",
+        error instanceof Error ? error.message : "Probe failed.",
       )
     } finally {
       setIsTesting(false)
@@ -197,16 +200,14 @@ function App() {
       const result = await loadScenarioBasicAuto(baseUrl, gateKey)
       const message =
         result.status === 200
-          ? "Scenario loaded for autonomous observation."
+          ? "Scene loaded for observation."
           : bodyPreview(result.rawText)
       recordStatus(result.status, message)
 
       if (result.status === 200) {
-        setFlowNote("Scenario loaded. Select LIVE or ACCELERATE to start FLOW.")
+        setFlowNote("Scene loaded. Set FLOW to LIVE or ACCELERATE.")
       } else if (result.status === 401) {
-        setFlowNote(
-          "401: X-World-Gate mismatch. Import current_fly_key.txt and retry.",
-        )
+        setFlowNote("401: X-World-Gate mismatch. Load key file and retry.")
       }
       if (shouldStopFlowForStatus(result.status)) {
         setFlowMode("PAUSE")
@@ -214,7 +215,7 @@ function App() {
     } catch (error) {
       setLastStatus(null)
       setLastMessage(
-        error instanceof Error ? error.message : "Scenario load failed",
+        error instanceof Error ? error.message : "Scene load failed.",
       )
     } finally {
       setIsScenarioLoading(false)
@@ -239,7 +240,7 @@ function App() {
       setLastStatus(nextValue.length > 0 ? 200 : null)
       setLastMessage(
         nextValue.length > 0
-          ? `X-World-Gate loaded from file (${nextValue.length} chars).`
+          ? `X-World-Gate loaded (${nextValue.length} chars).`
           : "Selected file does not contain a valid key.",
       )
     } catch (error) {
@@ -320,15 +321,15 @@ function App() {
             : cycle.message,
         )
 
-        if (cycle.stopFlow) {
-          if (cycle.stopStatus === 401) {
-            setFlowNote(
-              "FLOW paused on 401. Update X-World-Gate (Import key file) and retry.",
-            )
-          }
-          setFlowMode("PAUSE")
-          return
+      if (cycle.stopFlow) {
+        if (cycle.stopStatus === 401) {
+          setFlowNote(
+            "FLOW paused on 401. Update X-World-Gate (Load Key File) and retry.",
+          )
         }
+        setFlowMode("PAUSE")
+        return
+      }
       } catch (error) {
         setFlowMode("PAUSE")
         setFlowNote(
@@ -359,6 +360,8 @@ function App() {
   }, [baseUrl, flowMode, gateKey, flowBackoffMs, recordStatus])
 
   const agentsObserved = worldSnapshot?.agents?.length ?? 0
+  const locationsObserved = worldSnapshot?.locations?.length ?? 0
+  const capacityLeftObserved = metricsSnapshot?.workshop_capacity_left ?? null
   const deferredTraceLines = traceSnapshot.length
   const explainLines = explainSnapshot?.lines?.length ?? 0
   const worldSnapshotText = worldSnapshot
@@ -377,6 +380,45 @@ function App() {
       }),
     [deferredTraceLines, explainLines, metricsSnapshot, worldSnapshot],
   )
+  const graphNodeCount = stateFieldGraph.nodes.length
+  const graphEdgeCount = stateFieldGraph.edges.length
+  const pressureRatio = useMemo(() => {
+    const perTick = Math.max(1, metricsSnapshot?.workshop_capacity_per_tick ?? 1)
+    const left = clamp(metricsSnapshot?.workshop_capacity_left ?? perTick, 0, perTick)
+    return clamp((perTick - left) / perTick, 0, 1)
+  }, [metricsSnapshot])
+  const flowIntensity = useMemo(() => {
+    if (flowMode === "ACCELERATE") {
+      return 1
+    }
+    if (flowMode === "LIVE") {
+      return 0.72
+    }
+    return 0.34
+  }, [flowMode])
+  const graphFx = useMemo(
+    () => ({
+      ca: 0.058 + pressureRatio * 0.1 + (isFlowRunning ? 0.018 : 0.006),
+      grain: 0.09 + pressureRatio * 0.075 + flowIntensity * 0.034,
+      vignette: 0.57 + (1 - flowIntensity) * 0.08,
+      blur: 0,
+      bloom: 0.24 + pressureRatio * 0.27 + flowIntensity * 0.16,
+      sideAlpha: 0.065 + pressureRatio * 0.15 + flowIntensity * 0.05,
+      sideShift: 0,
+    }),
+    [flowIntensity, isFlowRunning, pressureRatio],
+  )
+  const graphActivity = useMemo(
+    () => ({
+      agents: agentsObserved,
+      queued: worldSnapshot?.queued_actions ?? 0,
+      pressure: pressureRatio,
+      flowMode,
+      running: isFlowRunning,
+      cycle: flowCycles,
+    }),
+    [agentsObserved, flowCycles, flowMode, isFlowRunning, pressureRatio, worldSnapshot],
+  )
 
   return (
     <main className="console-root">
@@ -388,7 +430,7 @@ function App() {
       <div className="console-layout">
         <aside className="console-side">
           <section className="connection-card">
-            <label htmlFor="base-url">Base API URL</label>
+            <label htmlFor="base-url">API Endpoint</label>
             <input
               id="base-url"
               value={baseUrl}
@@ -428,11 +470,11 @@ function App() {
 
             <div className="action-row">
               <button onClick={handleProbeClick} disabled={!canTest}>
-                {isTesting ? "Testing..." : "Connect / Test (/metrics)"}
+                {isTesting ? "Validating..." : "Validate Link"}
               </button>
-              <button onClick={handleImportKeyClick}>Import Key File</button>
+              <button onClick={handleImportKeyClick}>Load Key File</button>
               <button onClick={handleLoadScenario} disabled={!canLoadScenario}>
-                {isScenarioLoading ? "Loading..." : "Load Scenario"}
+                {isScenarioLoading ? "Loading Scene..." : "Load Scene"}
               </button>
             </div>
           </section>
@@ -460,10 +502,10 @@ function App() {
               </button>
             </div>
             <p className="flow-meta">
-              Mode: {flowMode} | Running: {isFlowRunning ? "yes" : "no"} | Cycles:{" "}
+              Mode {flowMode} | Loop {isFlowRunning ? "on" : "off"} | Cycles{" "}
               {flowCycles}
             </p>
-            <p className="flow-meta">Backoff: {flowBackoffMs}ms</p>
+            <p className="flow-meta">Retry delay {flowBackoffMs}ms</p>
             <p className="flow-note">{flowNote}</p>
           </section>
 
@@ -486,10 +528,10 @@ function App() {
           </section>
 
           <section className="telemetry-card">
-            <h2>Observation Snapshot</h2>
+            <h2>System Snapshot</h2>
             <p>Agents observed: {agentsObserved}</p>
-            <p>Deferred Trace entries: {deferredTraceLines}</p>
-            <p>Explainability Trace lines: {explainLines}</p>
+            <p>Trace lines: {deferredTraceLines}</p>
+            <p>Explain lines: {explainLines}</p>
             <p>
               Capacity left:{" "}
               {metricsSnapshot ? metricsSnapshot.workshop_capacity_left : "n/a"}
@@ -500,47 +542,90 @@ function App() {
         <section className="console-main">
           <section className="tab-card">
             <div className="tab-row">
-              <button
-                className={`tab-btn ${activeTab === "WORLD" ? "tab-active" : ""}`}
-                onClick={() => setActiveTab("WORLD")}
-              >
-                WORLD
-              </button>
-              <button
-                className={`tab-btn ${activeTab === "TRACE" ? "tab-active" : ""}`}
-                onClick={() => setActiveTab("TRACE")}
-              >
-                TRACE
-              </button>
-              <button
-                className={`tab-btn ${activeTab === "EXPLAIN" ? "tab-active" : ""}`}
-                onClick={() => setActiveTab("EXPLAIN")}
-              >
-                EXPLAIN
-              </button>
+              <div className="tab-row-left">
+                <button
+                  className={`tab-btn ${activeTab === "WORLD" ? "tab-active" : ""}`}
+                  onClick={() => setActiveTab("WORLD")}
+                >
+                  WORLD
+                </button>
+                <button
+                  className={`tab-btn ${activeTab === "TRACE" ? "tab-active" : ""}`}
+                  onClick={() => setActiveTab("TRACE")}
+                >
+                  TRACE
+                </button>
+                <button
+                  className={`tab-btn ${activeTab === "EXPLAIN" ? "tab-active" : ""}`}
+                  onClick={() => setActiveTab("EXPLAIN")}
+                >
+                  EXPLAIN
+                </button>
+              </div>
+              {activeTab === "WORLD" ? (
+                <div className="tab-row-right">
+                  <span className="hud-pill">Agents {agentsObserved}</span>
+                  <span className="hud-pill">Locations {locationsObserved}</span>
+                  <span className="hud-pill">
+                    Capacity {capacityLeftObserved ?? "n/a"}
+                  </span>
+                  <span className="hud-pill">{graphNodeCount} Nodes</span>
+                  <span className="hud-pill">{graphEdgeCount} Links</span>
+                </div>
+              ) : null}
             </div>
 
             {activeTab === "WORLD" ? (
               <div className="tab-panel tab-panel-world">
-                <GraphView graph={stateFieldGraph} />
-                <div className="panel-grid">
-                  <article className="panel-block">
-                    <h3>World Snapshot</h3>
-                    <pre>{worldSnapshotText}</pre>
-                  </article>
-                  <article className="panel-block">
-                    <h3>Constraints Snapshot</h3>
-                    <pre>{metricsSnapshotText}</pre>
-                  </article>
+                <div className="world-stage">
+                  <GraphView graph={stateFieldGraph} fx={graphFx} activity={graphActivity} />
+
+                  <button
+                    className="inspector-toggle"
+                    onClick={() => setIsInspectorOpen((value) => !value)}
+                  >
+                    {isInspectorOpen ? "Hide Inspector" : "Open Inspector"}
+                  </button>
+
+                  <aside
+                    className={`inspector-drawer ${
+                      isInspectorOpen ? "inspector-open" : "inspector-closed"
+                    }`}
+                  >
+                    <div className="inspector-head">
+                      <h3>Inspector</h3>
+                      <button
+                        className="inspector-close"
+                        onClick={() => setIsInspectorOpen(false)}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="panel-grid panel-grid-drawer">
+                      <article className="panel-block">
+                        <h3>World Snapshot</h3>
+                        <pre>{worldSnapshotText}</pre>
+                      </article>
+                      <article className="panel-block">
+                        <h3>Constraints Snapshot</h3>
+                        <pre>{metricsSnapshotText}</pre>
+                      </article>
+                    </div>
+                  </aside>
+
+                  <div className="world-caption">
+                    State field derived from agents, locations, and constraints.
+                  </div>
                 </div>
               </div>
             ) : null}
 
             {activeTab === "TRACE" ? (
               <div className="tab-panel">
-                <h3>Deferred Trace</h3>
+                <h3>TRACE</h3>
                 {traceSnapshot.length === 0 ? (
-                  <p className="empty-panel">No trace events yet.</p>
+                  <p className="empty-panel">No trace lines yet.</p>
                 ) : (
                   <ul className="trace-list">
                     {traceSnapshot
@@ -558,7 +643,7 @@ function App() {
 
             {activeTab === "EXPLAIN" ? (
               <div className="tab-panel">
-                <h3>Explainability Trace</h3>
+                <h3>EXPLAIN</h3>
                 {!explainSnapshot || explainSnapshot.lines.length === 0 ? (
                   <p className="empty-panel">No explain lines yet.</p>
                 ) : (

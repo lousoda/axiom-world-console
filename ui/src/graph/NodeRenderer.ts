@@ -33,15 +33,21 @@ export type StateMassCtxRenderer = (
 ) => StateMassRenderResult
 
 type Particle = {
-  angle: number
-  radial: number
+  baseX: number
+  baseY: number
   size: number
   alpha: number
-  offsetX: number
-  offsetY: number
-  driftPhase: number
+  phase: number
   driftSpeed: number
-  driftAmplitude: number
+  driftX: number
+  driftY: number
+}
+
+type Lobe = {
+  x: number
+  y: number
+  spreadX: number
+  spreadY: number
 }
 
 const TWO_PI = Math.PI * 2
@@ -67,124 +73,126 @@ function createPrng(seed: number): () => number {
   }
 }
 
-function buildParticles(input: {
-  radius: number
-  count: number
+function gaussian(prng: () => number): number {
+  // Box-Muller transform for clustered mass distributions.
+  let u = 0
+  let v = 0
+  while (u === 0) {
+    u = prng()
+  }
+  while (v === 0) {
+    v = prng()
+  }
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(TWO_PI * v)
+}
+
+function buildLobes(input: {
   prng: () => number
+  baseRadius: number
+  lobeCount: number
+}): Lobe[] {
+  const lobes: Lobe[] = []
+
+  for (let i = 0; i < input.lobeCount; i += 1) {
+    const angle = (i / input.lobeCount) * TWO_PI + (input.prng() - 0.5) * 0.95
+    const distance = input.baseRadius * (0.08 + input.prng() * 0.4)
+
+    lobes.push({
+      x: Math.cos(angle) * distance,
+      y: Math.sin(angle) * distance,
+      spreadX: input.baseRadius * (0.15 + input.prng() * 0.34),
+      spreadY: input.baseRadius * (0.13 + input.prng() * 0.3),
+    })
+  }
+
+  return lobes
+}
+
+function buildDustParticles(input: {
+  prng: () => number
+  count: number
+  baseRadius: number
+  stretchX: number
+  stretchY: number
+  lobes: Lobe[]
 }): Particle[] {
   const particles: Particle[] = []
 
   for (let i = 0; i < input.count; i += 1) {
-    const radial = Math.pow(input.prng(), 1.78) * input.radius
-    const radialNorm = radial / input.radius
-    const angle = input.prng() * TWO_PI
+    const lobe = input.lobes[Math.floor(input.prng() * input.lobes.length)]
+    const baseX = lobe.x + gaussian(input.prng) * lobe.spreadX
+    const baseY = lobe.y + gaussian(input.prng) * lobe.spreadY
+    const radialNorm = clamp(
+      Math.hypot(baseX / input.stretchX, baseY / input.stretchY) /
+        (input.baseRadius * 1.18),
+      0,
+      1,
+    )
 
     particles.push({
-      angle,
-      radial,
-      size: 0.55 + input.prng() * 1.9,
-      alpha: clamp(0.16 + (1 - radialNorm) * 0.72 + input.prng() * 0.08, 0.12, 0.92),
-      offsetX: (input.prng() - 0.5) * input.radius * 0.16 * radialNorm,
-      offsetY: (input.prng() - 0.5) * input.radius * 0.16 * radialNorm,
-      driftPhase: input.prng() * TWO_PI,
-      driftSpeed: 0.34 + input.prng() * 0.78,
-      driftAmplitude: 0.16 + input.prng() * 0.56,
+      baseX,
+      baseY,
+      size: clamp(0.24 + (1 - radialNorm) * 0.96 + input.prng() * 0.72, 0.18, 2.2),
+      alpha: clamp(0.1 + (1 - radialNorm) * 0.56 + input.prng() * 0.08, 0.05, 0.88),
+      phase: input.prng() * TWO_PI,
+      driftSpeed: 0.03 + input.prng() * 0.14,
+      driftX: 0.03 + input.prng() * 0.16,
+      driftY: 0.03 + input.prng() * 0.16,
     })
   }
 
   return particles
 }
 
-function drawMassHalo(ctx: CanvasRenderingContext2D, radius: number, color: StateMassColor) {
-  const gradient = ctx.createRadialGradient(
-    -radius * 0.22,
-    -radius * 0.18,
-    radius * 0.1,
-    0,
-    0,
-    radius * 1.08,
-  )
-  gradient.addColorStop(0, color.border)
-  gradient.addColorStop(0.42, color.background)
-  gradient.addColorStop(1, "rgba(7, 20, 36, 0)")
+function buildKernelParticles(input: {
+  prng: () => number
+  count: number
+  baseRadius: number
+}): Particle[] {
+  const particles: Particle[] = []
 
-  ctx.save()
-  ctx.globalAlpha = 0.32
-  ctx.fillStyle = gradient
-  ctx.beginPath()
-  ctx.ellipse(
-    0,
-    0,
-    radius * 0.98,
-    radius * 0.82,
-    radius * 0.04,
-    0,
-    TWO_PI,
-  )
-  ctx.fill()
-  ctx.restore()
+  for (let i = 0; i < input.count; i += 1) {
+    const baseX = gaussian(input.prng) * input.baseRadius * 0.18
+    const baseY = gaussian(input.prng) * input.baseRadius * 0.18
+
+    particles.push({
+      baseX,
+      baseY,
+      size: clamp(0.34 + input.prng() * 1.05, 0.24, 1.8),
+      alpha: clamp(0.34 + input.prng() * 0.5, 0.2, 0.96),
+      phase: input.prng() * TWO_PI,
+      driftSpeed: 0.04 + input.prng() * 0.12,
+      driftX: 0.02 + input.prng() * 0.1,
+      driftY: 0.02 + input.prng() * 0.1,
+    })
+  }
+
+  return particles
 }
 
-function drawMassShell(
-  ctx: CanvasRenderingContext2D,
-  radius: number,
-  seedPhase: number,
-  color: StateMassColor,
-) {
-  ctx.save()
-  ctx.globalAlpha = 0.26
-  ctx.fillStyle = color.background
-  ctx.beginPath()
-  ctx.ellipse(
-    radius * 0.04,
-    -radius * 0.02,
-    radius * (0.9 + Math.sin(seedPhase) * 0.06),
-    radius * (0.75 + Math.cos(seedPhase) * 0.08),
-    seedPhase * 0.22,
-    0,
-    TWO_PI,
-  )
-  ctx.fill()
+function drawParticles(input: {
+  ctx: CanvasRenderingContext2D
+  particles: Particle[]
+  now: number
+  seedPhase: number
+  stretchX: number
+  stretchY: number
+  alphaScale: number
+  sizeScale: number
+}) {
+  for (let i = 0; i < input.particles.length; i += 1) {
+    const particle = input.particles[i]
+    const wave = input.now * particle.driftSpeed + particle.phase
+    const x = particle.baseX * input.stretchX + Math.sin(wave) * particle.driftX
+    const y =
+      particle.baseY * input.stretchY +
+      Math.cos(wave * 0.82 + input.seedPhase) * particle.driftY
 
-  ctx.globalAlpha = 0.18
-  ctx.beginPath()
-  ctx.ellipse(
-    -radius * 0.16,
-    radius * 0.14,
-    radius * 0.74,
-    radius * 0.63,
-    seedPhase * 0.17 + 0.58,
-    0,
-    TWO_PI,
-  )
-  ctx.fill()
-  ctx.restore()
-}
-
-function drawMassBoundary(
-  ctx: CanvasRenderingContext2D,
-  radius: number,
-  seedPhase: number,
-  color: StateMassColor,
-  selected: boolean,
-  hover: boolean,
-) {
-  ctx.save()
-  ctx.strokeStyle = color.border
-  ctx.globalAlpha = selected ? 0.78 : hover ? 0.58 : 0.42
-  ctx.lineWidth = selected ? 1.6 : 1
-  ctx.beginPath()
-  ctx.ellipse(
-    radius * 0.03,
-    -radius * 0.01,
-    radius * (0.98 + Math.sin(seedPhase) * 0.05),
-    radius * (0.81 + Math.cos(seedPhase) * 0.05),
-    seedPhase * 0.2,
-    0,
-    TWO_PI,
-  )
-  ctx.stroke()
-  ctx.restore()
+    input.ctx.globalAlpha = clamp(particle.alpha * input.alphaScale, 0.05, 0.95)
+    input.ctx.beginPath()
+    input.ctx.arc(x, y, Math.max(0.14, particle.size * input.sizeScale), 0, TWO_PI)
+    input.ctx.fill()
+  }
 }
 
 export function createStateMassRenderer(config: StateMassConfig): StateMassCtxRenderer {
@@ -192,19 +200,32 @@ export function createStateMassRenderer(config: StateMassConfig): StateMassCtxRe
   const prng = createPrng(seed)
   const seedPhase = prng() * TWO_PI
 
-  const baseRadius = clamp(16 + config.value * 0.66, 18, 68)
-  const width = baseRadius * 2.55
-  const height = baseRadius * 2.22
-  const stretchX = 0.88 + prng() * 0.3
-  const stretchY = 0.84 + prng() * 0.3
-  const skewX = (prng() - 0.5) * baseRadius * 0.2
-  const skewY = (prng() - 0.5) * baseRadius * 0.2
+  const baseRadius = clamp(50 + config.value * 1.66, 62, 186)
+  const width = baseRadius * 4.2
+  const height = baseRadius * 4.2
+  const stretchX = 0.9 + prng() * 0.2
+  const stretchY = 0.88 + prng() * 0.23
+  const lobeCount = 3 + (seed % 3)
 
-  const particleCount = clamp(Math.round(baseRadius * 3.4 + config.value * 2.8), 72, 220)
-  const particles = buildParticles({
-    radius: baseRadius,
-    count: particleCount,
+  const lobes = buildLobes({
     prng,
+    baseRadius,
+    lobeCount,
+  })
+
+  const dustParticles = buildDustParticles({
+    prng,
+    count: clamp(Math.round(baseRadius * 11 + config.value * 9), 700, 3200),
+    baseRadius,
+    stretchX,
+    stretchY,
+    lobes,
+  })
+
+  const kernelParticles = buildKernelParticles({
+    prng,
+    count: clamp(Math.round(baseRadius * 3.8 + config.value * 4.6), 190, 980),
+    baseRadius,
   })
 
   return ({ ctx, x, y, state }) => ({
@@ -214,47 +235,54 @@ export function createStateMassRenderer(config: StateMassConfig): StateMassCtxRe
     },
     drawNode: () => {
       const now = performance.now() * 0.001
-      const radiusScale = state.selected ? 1.09 : state.hover ? 1.05 : 1
-      const radius = baseRadius * radiusScale
+      const breath = 1 + Math.sin(now * 0.14 + seedPhase) * 0.01
+      const scale = state.selected ? 1.06 : state.hover ? 1.03 : 1
+      const renderStretchX = stretchX * scale * breath
+      const renderStretchY = stretchY * scale * breath
 
       ctx.save()
-      ctx.translate(x + skewX, y + skewY)
+      ctx.translate(x, y)
 
-      drawMassHalo(ctx, radius, config.color)
-      drawMassShell(ctx, radius, seedPhase, config.color)
+      const fogRadius = baseRadius * (1.24 + (state.selected ? 0.08 : 0))
+      const fog = ctx.createRadialGradient(0, 0, 0, 0, 0, fogRadius)
+      fog.addColorStop(0, config.color.background)
+      fog.addColorStop(1, "rgba(0,0,0,0)")
+      ctx.fillStyle = fog
+      ctx.globalAlpha = state.selected ? 0.24 : 0.18
+      ctx.beginPath()
+      ctx.arc(0, 0, fogRadius, 0, TWO_PI)
+      ctx.fill()
+
+      ctx.save()
+      ctx.globalCompositeOperation = "screen"
+      ctx.fillStyle = config.color.border
+      drawParticles({
+        ctx,
+        particles: dustParticles,
+        now,
+        seedPhase,
+        stretchX: renderStretchX,
+        stretchY: renderStretchY,
+        alphaScale: state.selected ? 0.96 : 0.84,
+        sizeScale: state.selected ? 1.08 : 1,
+      })
+      ctx.restore()
 
       ctx.save()
       ctx.globalCompositeOperation = "lighter"
-      ctx.fillStyle = config.color.border
-
-      for (let i = 0; i < particles.length; i += 1) {
-        const particle = particles[i]
-        const driftWave = now * particle.driftSpeed + particle.driftPhase
-        const driftX = Math.sin(driftWave) * particle.driftAmplitude
-        const driftY = Math.cos(driftWave * 0.87 + seedPhase) * particle.driftAmplitude
-
-        const px =
-          Math.cos(particle.angle) * particle.radial * stretchX +
-          particle.offsetX +
-          driftX
-        const py =
-          Math.sin(particle.angle) * particle.radial * stretchY +
-          particle.offsetY +
-          driftY
-
-        ctx.globalAlpha = particle.alpha
-        ctx.fillRect(px, py, particle.size, particle.size)
-      }
+      ctx.fillStyle = "rgba(236, 246, 255, 1)"
+      drawParticles({
+        ctx,
+        particles: kernelParticles,
+        now,
+        seedPhase,
+        stretchX: renderStretchX * 0.92,
+        stretchY: renderStretchY * 0.9,
+        alphaScale: state.selected ? 0.9 : 0.74,
+        sizeScale: state.selected ? 1.08 : 1,
+      })
       ctx.restore()
 
-      drawMassBoundary(
-        ctx,
-        radius,
-        seedPhase,
-        config.color,
-        state.selected,
-        state.hover,
-      )
       ctx.restore()
     },
   })

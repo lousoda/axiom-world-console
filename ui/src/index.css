@@ -1,8 +1,9 @@
 :root {
   font-family:
-    "Space Grotesk", "IBM Plex Sans", "Segoe UI", -apple-system, sans-serif;
-  color: #dbe7f0;
-  background: #0a1118;
+    "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  color: #ddd3ff;
+  background: #020203;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -13,18 +14,24 @@
   box-sizing: border-box;
 }
 
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(1200px 600px at 20% -20%, #1a2a3b 0%, transparent 60%),
-    radial-gradient(1000px 600px at 120% -20%, #16222f 0%, transparent 56%),
-    #0a1118;
+  background: #020203;
 }
 
 #root {
   height: 100vh;
-  padding: 12px;
+  padding: 10px;
 }

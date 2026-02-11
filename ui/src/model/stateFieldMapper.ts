@@ -94,11 +94,11 @@ export function buildStateFieldGraph(input: {
       y: 0,
       fixed: true,
       color: {
-        background: "rgba(84, 115, 168, 0.28)",
-        border: "rgba(186, 202, 234, 0.9)",
+        background: "rgba(106, 88, 184, 0.3)",
+        border: "rgba(206, 194, 255, 0.92)",
         highlight: {
-          background: "rgba(84, 115, 168, 0.34)",
-          border: "rgba(214, 224, 242, 1)",
+          background: "rgba(106, 88, 184, 0.36)",
+          border: "rgba(220, 210, 255, 1)",
         },
       },
     },
@@ -110,11 +110,11 @@ export function buildStateFieldGraph(input: {
       y: -86,
       fixed: true,
       color: {
-        background: "rgba(120, 126, 184, 0.2)",
-        border: "rgba(180, 188, 234, 0.78)",
+        background: "rgba(136, 112, 198, 0.22)",
+        border: "rgba(198, 188, 244, 0.8)",
         highlight: {
-          background: "rgba(120, 126, 184, 0.26)",
-          border: "rgba(198, 208, 244, 0.92)",
+          background: "rgba(136, 112, 198, 0.28)",
+          border: "rgba(214, 206, 250, 0.94)",
         },
       },
     },
@@ -126,11 +126,11 @@ export function buildStateFieldGraph(input: {
       y: 88,
       fixed: true,
       color: {
-        background: "rgba(118, 146, 194, 0.2)",
-        border: "rgba(176, 206, 238, 0.76)",
+        background: "rgba(122, 154, 214, 0.2)",
+        border: "rgba(186, 212, 248, 0.78)",
         highlight: {
-          background: "rgba(118, 146, 194, 0.26)",
-          border: "rgba(196, 220, 244, 0.9)",
+          background: "rgba(122, 154, 214, 0.27)",
+          border: "rgba(202, 224, 252, 0.9)",
         },
       },
     },
@@ -142,11 +142,11 @@ export function buildStateFieldGraph(input: {
       y: 86,
       fixed: true,
       color: {
-        background: "rgba(152, 132, 112, 0.2)",
-        border: "rgba(212, 192, 170, 0.74)",
+        background: "rgba(176, 136, 194, 0.2)",
+        border: "rgba(230, 198, 238, 0.76)",
         highlight: {
-          background: "rgba(152, 132, 112, 0.26)",
-          border: "rgba(228, 206, 182, 0.88)",
+          background: "rgba(176, 136, 194, 0.27)",
+          border: "rgba(238, 210, 246, 0.9)",
         },
       },
     },
@@ -158,11 +158,11 @@ export function buildStateFieldGraph(input: {
       y: -102,
       fixed: true,
       color: {
-        background: "rgba(126, 132, 146, 0.2)",
-        border: "rgba(194, 204, 220, 0.76)",
+        background: "rgba(146, 138, 174, 0.2)",
+        border: "rgba(206, 198, 234, 0.78)",
         highlight: {
-          background: "rgba(126, 132, 146, 0.26)",
-          border: "rgba(210, 218, 232, 0.9)",
+          background: "rgba(146, 138, 174, 0.27)",
+          border: "rgba(220, 212, 244, 0.9)",
         },
       },
     },
@@ -176,8 +176,8 @@ export function buildStateFieldGraph(input: {
       to: "state_inertia",
       value: 2 + clamp(tick / 48, 0, 3),
       color: {
-        color: "rgba(138, 154, 196, 0.44)",
-        highlight: "rgba(168, 182, 220, 0.58)",
+        color: "rgba(152, 138, 210, 0.42)",
+        highlight: "rgba(186, 172, 236, 0.56)",
         opacity: 0.48,
       },
     },
@@ -188,8 +188,8 @@ export function buildStateFieldGraph(input: {
       to: "state_pressure",
       value: 2 + pressure * 4,
       color: {
-        color: "rgba(132, 168, 214, 0.4)",
-        highlight: "rgba(162, 198, 236, 0.55)",
+        color: "rgba(136, 174, 224, 0.38)",
+        highlight: "rgba(168, 204, 242, 0.54)",
         opacity: 0.44,
       },
     },
@@ -200,8 +200,8 @@ export function buildStateFieldGraph(input: {
       to: "state_latency",
       value: 2 + clamp(queued / 4, 0, 4),
       color: {
-        color: "rgba(176, 162, 142, 0.36)",
-        highlight: "rgba(202, 186, 166, 0.5)",
+        color: "rgba(182, 154, 198, 0.34)",
+        highlight: "rgba(214, 184, 226, 0.48)",
         opacity: 0.42,
       },
     },
@@ -212,8 +212,8 @@ export function buildStateFieldGraph(input: {
       to: "state_trace",
       value: 2 + clamp((input.traceCount + input.explainCount) / 34, 0, 4),
       color: {
-        color: "rgba(160, 168, 184, 0.34)",
-        highlight: "rgba(186, 194, 210, 0.46)",
+        color: "rgba(166, 160, 196, 0.34)",
+        highlight: "rgba(194, 188, 226, 0.46)",
         opacity: 0.4,
       },
     },
@@ -272,33 +272,37 @@ export function buildStateFieldGraph(input: {
   const coreCenter = anchorCenters.get("state_core") ?? { x: 0, y: 0 }
   const sphereRadius = 236 + agents * 8 + pressure * 36 + Math.min(logs / 24, 38)
   const primaryDustCount = clamp(
-    Math.round(640 + agents * 72 + Math.min(logs, 900) * 0.25),
-    640,
-    1180,
+    Math.round(760 + agents * 80 + Math.min(logs, 1100) * 0.28),
+    760,
+    1360,
   )
 
   const coolPockets = [
-    { background: "rgba(176, 198, 230, 0.34)", border: "rgba(224, 236, 252, 0.8)" },
-    { background: "rgba(166, 214, 220, 0.32)", border: "rgba(210, 240, 244, 0.76)" },
-    { background: "rgba(194, 186, 214, 0.3)", border: "rgba(232, 224, 248, 0.72)" },
-    { background: "rgba(204, 190, 168, 0.3)", border: "rgba(238, 220, 196, 0.72)" },
-    { background: "rgba(176, 170, 184, 0.3)", border: "rgba(220, 214, 228, 0.7)" },
+    { background: "rgba(206, 190, 255, 0.34)", border: "rgba(238, 228, 255, 0.84)" },
+    { background: "rgba(184, 172, 248, 0.34)", border: "rgba(226, 214, 255, 0.8)" },
+    { background: "rgba(170, 186, 244, 0.33)", border: "rgba(212, 222, 252, 0.78)" },
+    { background: "rgba(156, 170, 226, 0.32)", border: "rgba(200, 212, 242, 0.74)" },
+    { background: "rgba(174, 156, 214, 0.3)", border: "rgba(214, 198, 236, 0.72)" },
   ]
 
   const edgeColor = {
-    color: "rgba(150, 164, 196, 0.2)",
-    highlight: "rgba(180, 194, 222, 0.28)",
+    color: "rgba(164, 154, 214, 0.2)",
+    highlight: "rgba(192, 182, 236, 0.28)",
     opacity: 0.34,
   }
 
   const chainEdgeColor = {
-    color: "rgba(142, 156, 190, 0.24)",
-    highlight: "rgba(172, 188, 216, 0.3)",
+    color: "rgba(154, 146, 204, 0.24)",
+    highlight: "rgba(182, 174, 226, 0.3)",
     opacity: 0.36,
   }
 
   const connectChain = (ids: string[], stride: number) => {
     for (let i = stride; i < ids.length; i += 1) {
+      const keep = pseudo(3800 + i * 1.71 + stride * 11) > 0.42
+      if (!keep) {
+        continue
+      }
       edges.push({
         id: `e_sample_${edgeIndex++}`,
         kind: "sample",
@@ -310,17 +314,17 @@ export function buildStateFieldGraph(input: {
     }
   }
 
-  // Dense center haze.
+  // Dense interior haze.
   for (let i = 0; i < primaryDustCount; i += 1) {
     const a = pseudo(100 + i * 1.13)
     const b = pseudo(200 + i * 1.79)
     const c = pseudo(300 + i * 2.27)
     const d = pseudo(400 + i * 2.91)
     const angle = a * TWO_PI
-    const radius = Math.pow(b, 1.86) * sphereRadius * 0.88
+    const radius = Math.pow(b, 1.34) * sphereRadius * 0.9
     const x = coreCenter.x + Math.cos(angle) * radius + (c - 0.5) * (10 + radius * 0.08)
     const y = coreCenter.y + Math.sin(angle) * radius + (d - 0.5) * (10 + radius * 0.08)
-    const size = clamp(0.44 + (1 - radius / (sphereRadius * 0.88)) * 0.78 + c * 0.26, 0.42, 1.58)
+    const size = clamp(0.46 + (1 - radius / (sphereRadius * 0.9)) * 0.8 + c * 0.26, 0.42, 1.58)
     const color = coolPockets[Math.floor(pseudo(500 + i * 3.17) * coolPockets.length)]
     const sampleId = pushSampleNode({
       x,
@@ -331,7 +335,7 @@ export function buildStateFieldGraph(input: {
       border: color.border,
     })
 
-    if (i > 0 && i % 5 === 0) {
+    if (i > 0 && i % 9 === 0 && radius < sphereRadius * 0.54) {
       edges.push({
         id: `e_sample_${edgeIndex++}`,
         kind: "sample",
@@ -343,17 +347,95 @@ export function buildStateFieldGraph(input: {
     }
   }
 
+  // Extra interior micro-haze for volumetric feel.
+  const interiorHazeCount = 280
+  for (let i = 0; i < interiorHazeCount; i += 1) {
+    const a = pseudo(700 + i * 1.17)
+    const b = pseudo(740 + i * 1.73)
+    const c = pseudo(780 + i * 1.49)
+    const angle = a * TWO_PI
+    const radius = Math.pow(b, 1.38) * sphereRadius * 0.72
+    const x = coreCenter.x + Math.cos(angle) * radius + (c - 0.5) * 9
+    const y = coreCenter.y + Math.sin(angle) * radius + (pseudo(820 + i * 1.61) - 0.5) * 9
+    const pocketColor = coolPockets[Math.floor(pseudo(860 + i * 2.31) * coolPockets.length)]
+    pushSampleNode({
+      x,
+      y,
+      size: clamp(0.42 + pseudo(900 + i * 2.03) * 0.56, 0.4, 1.02),
+      anchorId: "state_core",
+      background: pocketColor.background,
+      border: pocketColor.border,
+    })
+  }
+
+  // Mid-shell haze to populate the sphere beyond center.
+  const midShellCount = 260
+  for (let i = 0; i < midShellCount; i += 1) {
+    const a = pseudo(920 + i * 1.27)
+    const b = pseudo(960 + i * 1.71)
+    const c = pseudo(1000 + i * 1.59)
+    const angle = a * TWO_PI
+    const radiusNorm = 0.48 + Math.pow(b, 0.74) * 0.44
+    const radius = radiusNorm * sphereRadius
+    const x = coreCenter.x + Math.cos(angle) * radius + (c - 0.5) * 8
+    const y = coreCenter.y + Math.sin(angle) * radius + (pseudo(1040 + i * 1.83) - 0.5) * 8
+    const pocketColor = coolPockets[Math.floor(pseudo(1080 + i * 2.21) * coolPockets.length)]
+    pushSampleNode({
+      x,
+      y,
+      size: clamp(0.38 + pseudo(1120 + i * 1.97) * 0.46, 0.36, 0.9),
+      anchorId: "state_trace",
+      background: pocketColor.background,
+      border: pocketColor.border,
+    })
+  }
+
+  // Moon-like albedo patches inside the sphere.
+  const albedoPatchCount = 9
+  for (let patch = 0; patch < albedoPatchCount; patch += 1) {
+    const patchAngle = pseudo(3880 + patch * 2.37) * TWO_PI
+    const patchRadius = Math.pow(pseudo(3920 + patch * 2.17), 0.95) * sphereRadius * 0.9
+    const patchX = coreCenter.x + Math.cos(patchAngle) * patchRadius
+    const patchY = coreCenter.y + Math.sin(patchAngle) * patchRadius
+    const spread = 18 + pseudo(3960 + patch * 2.63) * 44
+    const points = 96 + Math.floor(pseudo(4000 + patch * 2.81) * 120)
+    const palette = coolPockets[patch % coolPockets.length]
+    const patchIds: string[] = []
+
+    for (let i = 0; i < points; i += 1) {
+      const a = pseudo(4040 + patch * 19 + i * 1.31)
+      const b = pseudo(4080 + patch * 23 + i * 1.63)
+      const c = pseudo(4120 + patch * 17 + i * 1.43)
+      const angle = a * TWO_PI
+      const radius = Math.pow(b, 1.58) * spread
+      patchIds.push(
+        pushSampleNode({
+          x: patchX + Math.cos(angle) * radius + (c - 0.5) * 3.5,
+          y: patchY + Math.sin(angle) * radius + (pseudo(4160 + patch * 29 + i * 1.71) - 0.5) * 3.5,
+          size: clamp(0.42 + (1 - radius / spread) * 0.74 + c * 0.2, 0.4, 1.26),
+          anchorId: "state_core",
+          background: palette.background,
+          border: palette.border,
+        }),
+      )
+    }
+
+    connectChain(patchIds, 2)
+    connectChain(patchIds, 5)
+  }
+
   // Inner constellation clusters.
   const innerClusterCount = clamp(
-    11 + agents + Math.floor(input.traceCount / 14),
-    11,
-    20,
+    13 + agents + Math.floor(input.traceCount / 12),
+    13,
+    24,
   )
+  let previousClusterBridgeId = ""
   for (let cluster = 0; cluster < innerClusterCount; cluster += 1) {
     const pocketColor =
       coolPockets[Math.floor(pseudo(900 + cluster * 7.13) * coolPockets.length)]
     const centerAngle = pseudo(1000 + cluster * 2.11) * TWO_PI
-    const centerRadius = (0.16 + pseudo(1100 + cluster * 2.53) * 0.56) * sphereRadius
+    const centerRadius = (0.08 + pseudo(1100 + cluster * 2.53) * 0.8) * sphereRadius
     const centerX =
       coreCenter.x +
       Math.cos(centerAngle) * centerRadius +
@@ -362,9 +444,37 @@ export function buildStateFieldGraph(input: {
       coreCenter.y +
       Math.sin(centerAngle) * centerRadius +
       (pseudo(1300 + cluster * 3.61) - 0.5) * 16
-    const spread = 14 + pseudo(1400 + cluster * 2.91) * 26
-    const clusterPoints = 16 + Math.floor(pseudo(1500 + cluster * 3.13) * 20)
+    const spread = 18 + pseudo(1400 + cluster * 2.91) * 24
+    const coreSpread = 6 + pseudo(1450 + cluster * 2.49) * 10
+    const corePoints = 18 + Math.floor(pseudo(1470 + cluster * 2.27) * 16)
+    const clusterPoints = 28 + Math.floor(pseudo(1500 + cluster * 3.13) * 18)
     const clusterIds: string[] = []
+    const coreIds: string[] = []
+
+    // Dense kernel: gives each state mass visible volume.
+    for (let i = 0; i < corePoints; i += 1) {
+      const a = pseudo(1520 + cluster * 41 + i * 1.19)
+      const b = pseudo(1540 + cluster * 37 + i * 1.43)
+      const c = pseudo(1560 + cluster * 29 + i * 1.61)
+      const angle = a * TWO_PI
+      const radius = Math.pow(b, 1.9) * coreSpread
+      const x = centerX + Math.cos(angle) * radius + (c - 0.5) * (1.5 + radius * 0.06)
+      const y =
+        centerY +
+        Math.sin(angle) * radius +
+        (pseudo(1580 + cluster * 31 + i * 1.73) - 0.5) * (1.5 + radius * 0.06)
+
+      coreIds.push(
+        pushSampleNode({
+          x,
+          y,
+          size: clamp(0.58 + (1 - radius / coreSpread) * 0.78 + c * 0.18, 0.55, 1.58),
+          anchorId: "state_core",
+          background: "rgba(224, 212, 255, 0.42)",
+          border: "rgba(244, 238, 255, 0.9)",
+        }),
+      )
+    }
 
     for (let i = 0; i < clusterPoints; i += 1) {
       const a = pseudo(1600 + cluster * 23 + i * 1.31)
@@ -385,8 +495,43 @@ export function buildStateFieldGraph(input: {
       clusterIds.push(sampleId)
     }
 
+    connectChain(coreIds, 1)
+    connectChain(coreIds, 2)
     connectChain(clusterIds, 1)
-    connectChain(clusterIds, 3)
+    connectChain(clusterIds, 2)
+
+    if (coreIds[0] && clusterIds[0]) {
+      edges.push({
+        id: `e_sample_${edgeIndex++}`,
+        kind: "sample",
+        from: coreIds[0],
+        to: clusterIds[0],
+        value: 0.24,
+        color: {
+          color: "rgba(174, 166, 220, 0.22)",
+          highlight: "rgba(196, 188, 236, 0.28)",
+          opacity: 0.32,
+        },
+      })
+    }
+
+    if (previousClusterBridgeId && coreIds[0]) {
+      edges.push({
+        id: `e_sample_${edgeIndex++}`,
+        kind: "sample",
+        from: previousClusterBridgeId,
+        to: coreIds[0],
+        value: 0.22,
+        color: {
+          color: "rgba(164, 156, 210, 0.2)",
+          highlight: "rgba(188, 180, 230, 0.28)",
+          opacity: 0.28,
+        },
+      })
+    }
+    if (coreIds[0]) {
+      previousClusterBridgeId = coreIds[0]
+    }
   }
 
   // Outer halo made from broken arcs.
@@ -410,7 +555,7 @@ export function buildStateFieldGraph(input: {
         size: clamp(0.44 + pseudo(2700 + band * 29 + i * 1.13) * 0.34, 0.42, 0.86),
         anchorId: "state_trace",
         background: "rgba(160, 178, 210, 0.3)",
-        border: "rgba(206, 220, 244, 0.68)",
+        border: "rgba(214, 208, 248, 0.68)",
       })
 
       if (prevId) {
@@ -421,14 +566,47 @@ export function buildStateFieldGraph(input: {
           to: sampleId,
           value: 0.24,
           color: {
-            color: "rgba(142, 158, 188, 0.22)",
-            highlight: "rgba(168, 184, 214, 0.3)",
+            color: "rgba(154, 148, 198, 0.22)",
+            highlight: "rgba(178, 170, 220, 0.3)",
             opacity: 0.3,
           },
         })
       }
       prevId = sampleId
     }
+  }
+
+  // Contour clumps: visible dense pockets on the sphere boundary.
+  const contourClumpCount = 14
+  for (let clump = 0; clump < contourClumpCount; clump += 1) {
+    const angle = pseudo(4700 + clump * 2.49) * TWO_PI
+    const radius = sphereRadius * (0.9 + pseudo(4740 + clump * 2.17) * 0.16)
+    const centerX = coreCenter.x + Math.cos(angle) * radius
+    const centerY = coreCenter.y + Math.sin(angle) * radius
+    const spread = 8 + pseudo(4780 + clump * 2.73) * 13
+    const points = 18 + Math.floor(pseudo(4820 + clump * 2.31) * 22)
+    const ids: string[] = []
+    const pocketColor = coolPockets[clump % coolPockets.length]
+
+    for (let i = 0; i < points; i += 1) {
+      const a = pseudo(4860 + clump * 31 + i * 1.29)
+      const b = pseudo(4900 + clump * 29 + i * 1.47)
+      const c = pseudo(4940 + clump * 37 + i * 1.63)
+      const localRadius = Math.pow(b, 1.34) * spread
+      ids.push(
+        pushSampleNode({
+          x: centerX + Math.cos(a * TWO_PI) * localRadius + (c - 0.5) * 2.4,
+          y: centerY + Math.sin(a * TWO_PI) * localRadius + (pseudo(4980 + clump * 19 + i * 1.77) - 0.5) * 2.4,
+          size: clamp(0.42 + (1 - localRadius / spread) * 0.52 + c * 0.14, 0.4, 1.08),
+          anchorId: "state_trace",
+          background: pocketColor.background,
+          border: pocketColor.border,
+        }),
+      )
+    }
+
+    connectChain(ids, 1)
+    connectChain(ids, 2)
   }
 
   // Small peripheral islands around the halo.
@@ -455,7 +633,7 @@ export function buildStateFieldGraph(input: {
           size: clamp(0.4 + pseudo(3600 + island * 19 + i * 1.51) * 0.36, 0.38, 0.76),
           anchorId: "state_trace",
           background: "rgba(168, 182, 212, 0.28)",
-          border: "rgba(210, 222, 244, 0.64)",
+          border: "rgba(216, 210, 246, 0.64)",
         }),
       )
     }
