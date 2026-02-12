@@ -618,6 +618,42 @@
   color: var(--ui-text-soft);
 }
 
+.evidence-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.evidence-tag {
+  border: 1px solid var(--ui-border);
+  background: #09090d;
+  color: var(--ui-text-soft);
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+}
+
+.evidence-tag-denial {
+  border-color: #4f2f36;
+  color: #e7bcc8;
+}
+
+.evidence-tag-cooldown {
+  border-color: #3f3a51;
+  color: #c8c4ea;
+}
+
+.evidence-tag-adaptation {
+  border-color: #3b4f45;
+  color: #bee0d0;
+}
+
+.explain-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .empty-panel {
   margin: 0;
   color: var(--ui-text-dim);

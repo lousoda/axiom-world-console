@@ -38,6 +38,7 @@ const FLOW_LIMIT_AGENTS = 50
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN"
+type EvidenceTag = "DENIAL" | "COOLDOWN" | "ADAPTATION"
 type AutonomyEvidenceCounters = {
   capacityDenial: number
   cooldownPenalty: number
@@ -117,6 +118,30 @@ function extractEvidenceFlags(line: string): AutonomyEvidenceCounters {
         ? 1
         : 0,
   }
+}
+
+function evidenceTagsForText(line: string): EvidenceTag[] {
+  const lowered = line.toLowerCase()
+  const tags: EvidenceTag[] = []
+  if (
+    lowered.includes("earn denied") ||
+    lowered.includes("earn_denied_capacity")
+  ) {
+    tags.push("DENIAL")
+  }
+  if (
+    lowered.includes("cooldown_penalty") ||
+    lowered.includes("cooldown penalty")
+  ) {
+    tags.push("COOLDOWN")
+  }
+  if (
+    lowered.includes("wander once") ||
+    lowered.includes("recent capacity denial")
+  ) {
+    tags.push("ADAPTATION")
+  }
+  return tags
 }
 
 function App() {
@@ -753,11 +778,27 @@ function App() {
                     {traceSnapshot
                       .slice()
                       .reverse()
-                      .map((entry, index) => (
-                        <li key={index} className="trace-item">
-                          <pre>{formatUnknown(entry)}</pre>
-                        </li>
-                      ))}
+                      .map((entry, index) => {
+                        const entryText = typeof entry === "string" ? entry : formatUnknown(entry)
+                        const tags = evidenceTagsForText(entryText)
+                        return (
+                          <li key={index} className="trace-item">
+                            {tags.length > 0 ? (
+                              <div className="evidence-tags">
+                                {tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            <pre>{entryText}</pre>
+                          </li>
+                        )
+                      })}
                   </ul>
                 )}
               </div>
@@ -773,9 +814,26 @@ function App() {
                     {explainSnapshot.lines
                       .slice()
                       .reverse()
-                      .map((line, index) => (
-                        <li key={index}>{line}</li>
-                      ))}
+                      .map((line, index) => {
+                        const tags = evidenceTagsForText(line)
+                        return (
+                          <li key={index}>
+                            {tags.length > 0 ? (
+                              <div className="evidence-tags">
+                                {tags.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                            <div className="explain-line">{line}</div>
+                          </li>
+                        )
+                      })}
                   </ul>
                 )}
               </div>
