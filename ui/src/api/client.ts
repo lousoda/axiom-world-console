@@ -131,6 +131,21 @@ export async function loadScenarioBasicAuto(baseUrl: string, gateKey: string) {
   )
 }
 
+export type ScenarioKey = "basic_auto" | "autonomy_proof"
+
+export async function loadScenario(
+  baseUrl: string,
+  gateKey: string,
+  scenario: ScenarioKey,
+) {
+  return requestApi<{ ok: boolean; scenario: string }>(
+    baseUrl,
+    gateKey,
+    `/scenario/${scenario}`,
+    "POST",
+  )
+}
+
 export async function autoPulse(baseUrl: string, gateKey: string, limitAgents = 50) {
   return requestApi<AutoTickResponse>(
     baseUrl,

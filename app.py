@@ -1217,6 +1217,52 @@ def scenario_basic_auto():
         log("scenario_loaded", {"name": "basic_auto", "agents": len(world_state["agents"])})
         return {"ok": True, "scenario": "basic_auto", "agents": world_state["agents"]}
 
+@app.post("/scenario/autonomy_proof")
+def scenario_autonomy_proof():
+    """
+    Deterministic autonomy showcase:
+    - two earn-goal agents start in workshop with auto enabled
+    - workshop capacity is 1 per tick, so denial/adaptation is guaranteed
+    """
+    with WORLD_STATE_LOCK:
+        reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
+
+        agents = [
+            {"name": "agent_1", "deposit_mon": 8, "goal": "earn", "auto": True, "pos": "workshop"},
+            {"name": "agent_2", "deposit_mon": 8, "goal": "earn", "auto": True, "pos": "workshop"},
+            {"name": "agent_3", "deposit_mon": 4, "goal": "wander", "auto": True, "pos": "market"},
+        ]
+
+        locations = world_state.get("locations", [])
+        if not isinstance(locations, list):
+            locations = ["spawn", "market", "workshop"]
+            world_state["locations"] = locations
+
+        for a in agents:
+            pos = a.get("pos", "spawn")
+            if not isinstance(pos, str) or pos not in locations:
+                pos = "spawn"
+
+            agent = {
+                "id": _next_agent_id(),
+                "name": a["name"],
+                "balance_mon": a["deposit_mon"],
+                "pos": pos,
+                "status": "active",
+                "inventory": [],
+                "auto": bool(a.get("auto", False)),
+                "cooldown_until_tick": 0,
+                "goal": a.get("goal", "earn"),
+            }
+            world_state["agents"].append(agent)
+            log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
+            if agent["auto"]:
+                log("auto_enabled", {"agent_id": agent["id"]})
+            log("goal_set", {"agent_id": agent["id"], "goal": agent["goal"]})
+
+        log("scenario_loaded", {"name": "autonomy_proof", "agents": len(world_state["agents"])})
+        return {"ok": True, "scenario": "autonomy_proof", "agents": world_state["agents"]}
+
 @app.get("/metrics")
 def metrics():
     econ = world_state.get("economy", {})

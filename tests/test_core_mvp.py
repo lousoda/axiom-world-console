@@ -338,3 +338,38 @@ def test_happy_path_join_act_tick_explain():
         assert "earned" in joined or "earn denied" in joined
     finally:
         app.ALLOW_FREE_JOIN = prev_allow
+
+
+def test_autonomy_proof_scenario_surfaces_denial_and_adaptation():
+    app.reset_in_place()
+    scenario = app.scenario_autonomy_proof()
+    assert scenario["ok"] is True
+    assert scenario["scenario"] == "autonomy_proof"
+    assert len(scenario.get("agents", [])) >= 3
+
+    first = app.auto_tick(limit_agents=50)
+    assert first["ok"] is True
+
+    second = app.auto_tick(limit_agents=50)
+    assert second["ok"] is True
+
+    logs = app.world_state.get("logs", [])
+    events = [e for e in logs if isinstance(e, dict)]
+    names = [e.get("event") for e in events]
+
+    assert "earn_denied_capacity" in names
+    assert "cooldown_penalty" in names
+
+    adapted = False
+    for event in events:
+        if event.get("event") != "auto_decision":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        reason = str(data.get("reason", ""))
+        if "recent capacity denial" in reason and "wander once" in reason:
+            adapted = True
+            break
+
+    assert adapted, "Expected one-shot policy adaptation after capacity denial"

@@ -8,7 +8,8 @@ import {
 } from "react"
 import "./App.css"
 import {
-  loadScenarioBasicAuto,
+  loadScenario,
+  type ScenarioKey,
   probeMetrics,
 } from "./api/client"
 import { executeFlowCycle } from "./flow/flowController"
@@ -29,6 +30,7 @@ import type {
 const DEFAULT_BASE_URL = "http://127.0.0.1:8001"
 const STORAGE_BASE_URL = "world_console_base_url"
 const STORAGE_GATE_KEY = "world_console_gate_key"
+const STORAGE_SCENARIO = "world_console_scenario"
 const OBSERVED_CODES = [200, 401, 402, 409, 429] as const
 const TRACE_LIMIT = 40
 const EXPLAIN_LIMIT = 40
@@ -36,6 +38,11 @@ const FLOW_LIMIT_AGENTS = 50
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN"
+type AutonomyEvidenceCounters = {
+  capacityDenial: number
+  cooldownPenalty: number
+  adaptationWanderOnce: number
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -91,6 +98,27 @@ function formatUnknown(value: unknown): string {
   }
 }
 
+function extractEvidenceFlags(line: string): AutonomyEvidenceCounters {
+  const lowered = line.toLowerCase()
+  return {
+    capacityDenial:
+      lowered.includes("earn denied") ||
+      lowered.includes("earn_denied_capacity")
+        ? 1
+        : 0,
+    cooldownPenalty:
+      lowered.includes("cooldown_penalty") ||
+      lowered.includes("cooldown penalty")
+        ? 1
+        : 0,
+    adaptationWanderOnce:
+      lowered.includes("wander once") ||
+      lowered.includes("recent capacity denial")
+        ? 1
+        : 0,
+  }
+}
+
 function App() {
   const [baseUrl, setBaseUrl] = useState<string>(() =>
     loadStorageValue(STORAGE_BASE_URL, DEFAULT_BASE_URL),
@@ -98,6 +126,12 @@ function App() {
   const [gateKey, setGateKey] = useState<string>(() =>
     sanitizeGateKey(loadStorageValue(STORAGE_GATE_KEY, "")),
   )
+  const [scenarioKey, setScenarioKey] = useState<ScenarioKey>(() => {
+    const saved = loadStorageValue(STORAGE_SCENARIO, "autonomy_proof")
+    return saved === "basic_auto" || saved === "autonomy_proof"
+      ? saved
+      : "autonomy_proof"
+  })
 
   const [isTesting, setIsTesting] = useState<boolean>(false)
   const [isScenarioLoading, setIsScenarioLoading] = useState<boolean>(false)
@@ -130,9 +164,17 @@ function App() {
   const [explainSnapshot, setExplainSnapshot] = useState<ExplainRecentSnapshot | null>(
     null,
   )
+  const [autonomyEvidence, setAutonomyEvidence] = useState<AutonomyEvidenceCounters>(
+    {
+      capacityDenial: 0,
+      cooldownPenalty: 0,
+      adaptationWanderOnce: 0,
+    },
+  )
 
   const flowTokenRef = useRef(0)
   const keyFileInputRef = useRef<HTMLInputElement | null>(null)
+  const seenExplainEvidenceRef = useRef<Set<string>>(new Set())
 
   const recordStatus = useCallback((status: number, message: string) => {
     setLastStatus(status)
@@ -197,15 +239,22 @@ function App() {
 
     setIsScenarioLoading(true)
     try {
-      const result = await loadScenarioBasicAuto(baseUrl, gateKey)
+      const result = await loadScenario(baseUrl, gateKey, scenarioKey)
       const message =
         result.status === 200
-          ? "Scene loaded for observation."
+          ? `Scene loaded: ${scenarioKey}.`
           : bodyPreview(result.rawText)
       recordStatus(result.status, message)
 
       if (result.status === 200) {
-        setFlowNote("Scene loaded. Set FLOW to LIVE or ACCELERATE.")
+        seenExplainEvidenceRef.current.clear()
+        setAutonomyEvidence({
+          capacityDenial: 0,
+          cooldownPenalty: 0,
+          adaptationWanderOnce: 0,
+        })
+        setExplainSnapshot(null)
+        setFlowNote(`Scene "${scenarioKey}" loaded. Set FLOW to LIVE or ACCELERATE.`)
       } else if (result.status === 401) {
         setFlowNote("401: X-World-Gate mismatch. Load key file and retry.")
       }
@@ -359,6 +408,39 @@ function App() {
     }
   }, [baseUrl, flowMode, gateKey, flowBackoffMs, recordStatus])
 
+  useEffect(() => {
+    const lines = explainSnapshot?.lines
+    if (!lines || lines.length === 0) {
+      return
+    }
+    let deltaCapacityDenial = 0
+    let deltaCooldownPenalty = 0
+    let deltaAdaptationWanderOnce = 0
+    for (const line of lines) {
+      if (seenExplainEvidenceRef.current.has(line)) {
+        continue
+      }
+      seenExplainEvidenceRef.current.add(line)
+      const flags = extractEvidenceFlags(line)
+      deltaCapacityDenial += flags.capacityDenial
+      deltaCooldownPenalty += flags.cooldownPenalty
+      deltaAdaptationWanderOnce += flags.adaptationWanderOnce
+    }
+    if (
+      deltaCapacityDenial === 0 &&
+      deltaCooldownPenalty === 0 &&
+      deltaAdaptationWanderOnce === 0
+    ) {
+      return
+    }
+    setAutonomyEvidence((prev) => ({
+      capacityDenial: prev.capacityDenial + deltaCapacityDenial,
+      cooldownPenalty: prev.cooldownPenalty + deltaCooldownPenalty,
+      adaptationWanderOnce:
+        prev.adaptationWanderOnce + deltaAdaptationWanderOnce,
+    }))
+  }, [explainSnapshot])
+
   const agentsObserved = worldSnapshot?.agents?.length ?? 0
   const locationsObserved = worldSnapshot?.locations?.length ?? 0
   const capacityLeftObserved = metricsSnapshot?.workshop_capacity_left ?? null
@@ -460,6 +542,30 @@ function App() {
             </p>
             <p className="field-meta">Key fingerprint: {keySummary}</p>
 
+            <label>Scenario</label>
+            <div className="scenario-row">
+              <button
+                className={scenarioKey === "autonomy_proof" ? "scenario-active" : ""}
+                onClick={() => {
+                  setScenarioKey("autonomy_proof")
+                  persistStorageValue(STORAGE_SCENARIO, "autonomy_proof")
+                }}
+                type="button"
+              >
+                autonomy_proof
+              </button>
+              <button
+                className={scenarioKey === "basic_auto" ? "scenario-active" : ""}
+                onClick={() => {
+                  setScenarioKey("basic_auto")
+                  persistStorageValue(STORAGE_SCENARIO, "basic_auto")
+                }}
+                type="button"
+              >
+                basic_auto
+              </button>
+            </div>
+
             <input
               className="file-input-hidden"
               type="file"
@@ -536,6 +642,22 @@ function App() {
               Capacity left:{" "}
               {metricsSnapshot ? metricsSnapshot.workshop_capacity_left : "n/a"}
             </p>
+          </section>
+
+          <section className="evidence-card">
+            <h2>Autonomy Evidence</h2>
+            <div className="evidence-strip">
+              <span className="evidence-pill">
+                Capacity denial: {autonomyEvidence.capacityDenial}
+              </span>
+              <span className="evidence-pill">
+                Cooldown penalty: {autonomyEvidence.cooldownPenalty}
+              </span>
+              <span className="evidence-pill">
+                Adaptation (wander once): {autonomyEvidence.adaptationWanderOnce}
+              </span>
+            </div>
+            <p className="evidence-note">Derived from EXPLAIN forensic trace.</p>
           </section>
         </aside>
 
