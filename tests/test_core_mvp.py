@@ -373,3 +373,48 @@ def test_autonomy_proof_scenario_surfaces_denial_and_adaptation():
             break
 
     assert adapted, "Expected one-shot policy adaptation after capacity denial"
+
+
+def test_adaptive_goal_override_restores_after_capacity_streak():
+    app.reset_in_place()
+
+    app.world_state["agents"] = [
+        {
+            "id": 1,
+            "name": "earner_a",
+            "balance_mon": 10,
+            "pos": "workshop",
+            "status": "active",
+            "inventory": [],
+            "auto": True,
+            "cooldown_until_tick": 0,
+            "goal": "earn",
+        },
+        {
+            "id": 2,
+            "name": "earner_b",
+            "balance_mon": 0,
+            "pos": "workshop",
+            "status": "active",
+            "inventory": [],
+            "auto": True,
+            "cooldown_until_tick": 0,
+            "goal": "earn",
+        },
+    ]
+
+    for _ in range(8):
+        out = app.auto_tick(limit_agents=50)
+        assert out["ok"] is True
+
+    events = [
+        e for e in app.world_state.get("logs", []) if isinstance(e, dict)
+    ]
+    names = [e.get("event") for e in events]
+
+    assert "earn_denied_capacity" in names
+    assert "adaptive_goal_override" in names
+    assert "goal_restore" in names
+
+    agent_b = app.find_agent(2)
+    assert agent_b.get("goal") == "earn"

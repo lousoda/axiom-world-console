@@ -21,6 +21,8 @@ MAX_LOGS = 5000
 MOVE_COST_MON = 1
 MARKET_ITEM_PRICE_MON = 2
 MARKET_DEFAULT_ITEM = "scrap"
+ADAPTIVE_DENIAL_STREAK_THRESHOLD = 2
+ADAPTIVE_WANDER_TICKS = 2
 
 app = FastAPI(title="World Model Agent (MVP)")
 
@@ -1050,17 +1052,22 @@ def tick(steps: int = Query(1, ge=1, le=100)):
                     )
 
                     agent["pos"] = to
+                    agent["capacity_denial_streak"] = 0
                     log("move", {"agent_id": agent["id"], "to": agent["pos"]})
                     applied_this_tick += 1
 
                 elif a_type == "earn":
                     if agent["pos"] != "workshop":
+                        agent["capacity_denial_streak"] = 0
                         log("earn_denied_wrong_location", {"agent_id": agent["id"], "pos": agent["pos"]})
                     else:
                         # Economy v2: workshop capacity constraint per tick
                         left = _to_non_negative_int(econ.get("workshop_capacity_left", 0), 0)
                         if left <= 0:
                             log("earn_denied_capacity", {"agent_id": agent["id"], "pos": agent["pos"], "left": left})
+                            streak = _to_non_negative_int(agent.get("capacity_denial_streak", 0), 0) + 1
+                            agent["capacity_denial_streak"] = streak
+                            log("capacity_denial_streak", {"agent_id": agent["id"], "streak": streak})
                             penalty_until = world_state["tick"] + 2
                             agent["cooldown_until_tick"] = max(_to_non_negative_int(agent.get("cooldown_until_tick", 0), 0), penalty_until)
                             log("cooldown_penalty", {"agent_id": agent["id"], "until": agent["cooldown_until_tick"], "reason": "capacity"})
@@ -1073,6 +1080,7 @@ def tick(steps: int = Query(1, ge=1, le=100)):
                             log("earn_denied_invalid_amount", {"agent_id": agent["id"], "amount": payload.get("amount")})
                             continue
                         agent["balance_mon"] = _to_non_negative_int(agent.get("balance_mon", 0), 0) + amount
+                        agent["capacity_denial_streak"] = 0
                         econ["workshop_capacity_left"] = left - 1
                         log(
                             "earn",
@@ -1433,6 +1441,21 @@ def _format_event(e: Dict[str, Any]) -> str:
         )
     if event == "goal_set":
         return f"tick {tick_val}: goal set for agent {data.get('agent_id')} -> {data.get('goal')}"
+    if event == "adaptive_goal_override":
+        return (
+            f"tick {tick_val}: adaptive goal override for agent {data.get('agent_id')} "
+            f"{data.get('from')} -> {data.get('to')} until_tick={data.get('until_tick')} reason={data.get('reason')}"
+        )
+    if event == "goal_restore":
+        return (
+            f"tick {tick_val}: adaptive goal restore for agent {data.get('agent_id')} "
+            f"-> {data.get('goal')} reason={data.get('reason')}"
+        )
+    if event == "capacity_denial_streak":
+        return (
+            f"tick {tick_val}: capacity denial streak for agent {data.get('agent_id')} "
+            f"-> {data.get('streak')}"
+        )
     if event == "auto_enabled_all":
         return f"tick {tick_val}: auto enabled for all active agents (count={data.get('count')})"
     if event == "auto_disabled_all":
@@ -1579,12 +1602,55 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     pos = agent.get("pos", "spawn")
     goal: str = agent.get("goal", "earn")
     bal = _to_non_negative_int(agent.get("balance_mon", 0), 0)
+    adaptive_active = False
+
+    adaptive_base = agent.get("adaptive_goal_base")
+    adaptive_until = _to_non_negative_int(agent.get("adaptive_goal_until_tick", 0), 0)
+    if isinstance(adaptive_base, str) and adaptive_base:
+        if tick_now < adaptive_until and agent.get("goal") == "wander":
+            goal = "wander"
+            adaptive_active = True
+        else:
+            agent["goal"] = adaptive_base
+            goal = adaptive_base
+            agent.pop("adaptive_goal_base", None)
+            agent.pop("adaptive_goal_until_tick", None)
+            log(
+                "goal_restore",
+                {"agent_id": agent.get("id"), "goal": goal, "reason": "adaptive window elapsed"},
+            )
+
+    streak = _to_non_negative_int(agent.get("capacity_denial_streak", 0), 0)
+    if (
+        not adaptive_active
+        and goal == "earn"
+        and streak >= ADAPTIVE_DENIAL_STREAK_THRESHOLD
+    ):
+        until_tick = tick_now + ADAPTIVE_WANDER_TICKS
+        agent["adaptive_goal_base"] = goal
+        agent["adaptive_goal_until_tick"] = until_tick
+        agent["goal"] = "wander"
+        goal = "wander"
+        adaptive_active = True
+        agent["capacity_denial_streak"] = 0
+        agent.pop("last_denied_reason", None)
+        agent.pop("last_denied_tick", None)
+        log(
+            "adaptive_goal_override",
+            {
+                "agent_id": agent.get("id"),
+                "from": "earn",
+                "to": "wander",
+                "until_tick": until_tick,
+                "reason": "capacity denial streak",
+            },
+        )
 
     # --- Economy v2: react to recent capacity denial (must run BEFORE cooldown gate) ---
     last_reason = agent.get("last_denied_reason")
     last_tick = agent.get("last_denied_tick")
 
-    if last_reason == "capacity" and last_tick is not None:
+    if not adaptive_active and last_reason == "capacity" and last_tick is not None:
         # denial was very recent -> do one wander/move even if cooldown is set
         if tick_now <= _to_non_negative_int(last_tick, 0) + 1:
             to = _pick_next_location(pos)
@@ -1650,13 +1716,17 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     if goal == "wander":
+        wander_reason = "wander"
+        if adaptive_active:
+            wander_reason = "recent capacity denial -> adaptive wander window"
+
         if bal < MOVE_COST_MON:
             log(
                 "auto_decision",
                 {
                     "agent_id": agent.get("id"),
                     "goal": goal,
-                    "reason": "wander but insufficient funds for move",
+                    "reason": f"{wander_reason} but insufficient funds for move",
                     "chosen": None,
                 },
             )
@@ -1670,7 +1740,7 @@ def _auto_policy_for_agent(agent: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {
                 "agent_id": agent.get("id"),
                 "goal": goal,
-                "reason": f"wander -> move {pos} -> {to}",
+                "reason": f"{wander_reason} -> move {pos} -> {to}",
                 "chosen": chosen,
             },
         )
