@@ -8,6 +8,10 @@ import {
 } from "react"
 import "./App.css"
 import {
+  fetchExplainRecent,
+  fetchLogs,
+  fetchMetrics,
+  fetchWorld,
   loadScenario,
   type ScenarioKey,
   probeMetrics,
@@ -41,6 +45,8 @@ const OBSERVED_CODES = [200, 401, 402, 409, 429] as const
 const TRACE_LIMIT = 40
 const EXPLAIN_LIMIT = 80
 const FLOW_LIMIT_AGENTS = 50
+const SCENE_REFRESH_LOGS_LIMIT = 28
+const SCENE_REFRESH_EXPLAIN_LIMIT = 60
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN"
@@ -178,6 +184,57 @@ function App() {
     !isScenarioLoading &&
     !isFlowRunning
 
+  const refreshSnapshotsAfterSceneLoad = useCallback(async () => {
+    try {
+      const [worldRes, metricsRes, logsRes, explainRes] = await Promise.all([
+        fetchWorld(baseUrl, gateKey),
+        fetchMetrics(baseUrl, gateKey),
+        fetchLogs(baseUrl, gateKey, SCENE_REFRESH_LOGS_LIMIT),
+        fetchExplainRecent(baseUrl, gateKey, SCENE_REFRESH_EXPLAIN_LIMIT),
+      ])
+
+      if (worldRes.data) {
+        setWorldSnapshot(worldRes.data)
+      }
+      if (metricsRes.data) {
+        setMetricsSnapshot(metricsRes.data)
+      }
+      if (Array.isArray(logsRes.data)) {
+        setTraceSnapshot(logsRes.data)
+      }
+      if (explainRes.data) {
+        setExplainSnapshot(explainRes.data)
+      }
+
+      const responses = [worldRes, metricsRes, logsRes, explainRes]
+      const stopStatus = responses.find((r) =>
+        shouldStopFlowForStatus(r.status),
+      )?.status
+
+      if (stopStatus !== undefined) {
+        recordStatus(stopStatus, "Scene loaded, but snapshot pull hit a gated status.")
+        return { stopStatus, refreshError: false }
+      }
+
+      const nonOk = responses.find((r) => r.status !== 200)
+      if (nonOk) {
+        recordStatus(nonOk.status, bodyPreview(nonOk.rawText))
+        return { stopStatus: null, refreshError: false }
+      }
+
+      recordStatus(200, "Scene loaded and snapshots refreshed.")
+      return { stopStatus: null, refreshError: false }
+    } catch (error) {
+      setLastStatus(null)
+      setLastMessage(
+        error instanceof Error
+          ? `Snapshot refresh failed: ${error.message}`
+          : "Snapshot refresh failed.",
+      )
+      return { stopStatus: null, refreshError: true }
+    }
+  }, [baseUrl, gateKey, recordStatus])
+
   const keySummary = useMemo(() => summarizeKey(gateKey), [gateKey])
 
   const statusSummary = useMemo(() => {
@@ -238,7 +295,22 @@ function App() {
           adaptationWanderOnce: 0,
         })
         setExplainSnapshot(null)
-        setFlowNote(`Scene "${scenarioKey}" loaded. Set FLOW to LIVE or ACCELERATE.`)
+        setActiveTab("WORLD")
+        const refresh = await refreshSnapshotsAfterSceneLoad()
+
+        if (refresh.stopStatus === 401) {
+          setFlowNote("Scene loaded. 401 during snapshot refresh: update X-World-Gate.")
+          setFlowMode("PAUSE")
+        } else if (refresh.stopStatus === 402 || refresh.stopStatus === 409) {
+          setFlowNote(
+            `Scene loaded. Snapshot refresh paused on status ${refresh.stopStatus}.`,
+          )
+          setFlowMode("PAUSE")
+        } else if (refresh.refreshError) {
+          setFlowNote(`Scene "${scenarioKey}" loaded. Snapshot refresh failed; FLOW is still available.`)
+        } else {
+          setFlowNote(`Scene "${scenarioKey}" loaded. Observation refreshed.`)
+        }
       } else if (result.status === 401) {
         setFlowNote("401: X-World-Gate mismatch. Load key file and retry.")
       }
@@ -485,6 +557,24 @@ function App() {
     }),
     [agentsObserved, flowCycles, flowMode, isFlowRunning, pressureRatio, worldSnapshot],
   )
+  const latestEvidencePreview = useMemo(() => {
+    if (!explainSnapshot?.lines || explainSnapshot.lines.length === 0) {
+      return [] as Array<{ text: string; tags: string[] }>
+    }
+    const preview: Array<{ text: string; tags: string[] }> = []
+    for (let idx = explainSnapshot.lines.length - 1; idx >= 0; idx -= 1) {
+      const text = explainSnapshot.lines[idx]
+      const tags = evidenceTagsForText(text)
+      if (tags.length === 0) {
+        continue
+      }
+      preview.push({ text, tags })
+      if (preview.length >= 3) {
+        break
+      }
+    }
+    return preview
+  }, [explainSnapshot])
 
   return (
     <main className="console-root">
@@ -630,17 +720,6 @@ function App() {
             <pre className="status-message">{lastMessage}</pre>
           </section>
 
-          <section className="telemetry-card">
-            <h2>System Snapshot</h2>
-            <p>Agents observed: {agentsObserved}</p>
-            <p>Trace lines: {deferredTraceLines}</p>
-            <p>Explain lines: {explainLines}</p>
-            <p>
-              Capacity left:{" "}
-              {metricsSnapshot ? metricsSnapshot.workshop_capacity_left : "n/a"}
-            </p>
-          </section>
-
           <section className="evidence-card">
             <h2>Autonomy Evidence</h2>
             <div className="evidence-strip">
@@ -655,6 +734,17 @@ function App() {
               </span>
             </div>
             <p className="evidence-note">Derived from EXPLAIN forensic trace.</p>
+          </section>
+
+          <section className="telemetry-card">
+            <h2>System Snapshot</h2>
+            <p>Agents observed: {agentsObserved}</p>
+            <p>Trace lines: {deferredTraceLines}</p>
+            <p>Explain lines: {explainLines}</p>
+            <p>
+              Capacity left:{" "}
+              {metricsSnapshot ? metricsSnapshot.workshop_capacity_left : "n/a"}
+            </p>
           </section>
         </aside>
 
@@ -748,6 +838,28 @@ function App() {
             {activeTab === "TRACE" ? (
               <div className="tab-panel">
                 <h3>TRACE</h3>
+                {latestEvidencePreview.length > 0 ? (
+                  <section className="evidence-peek">
+                    <h4>Latest Evidence</h4>
+                    <ul className="evidence-peek-list">
+                      {latestEvidencePreview.map((entry, index) => (
+                        <li key={`${entry.text}-${index}`} className="evidence-peek-item">
+                          <div className="evidence-tags">
+                            {entry.tags.map((tag) => (
+                              <span
+                                key={`${tag}-${index}`}
+                                className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                          <pre>{entry.text}</pre>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
                 {traceSnapshot.length === 0 ? (
                   <p className="empty-panel">No trace lines yet.</p>
                 ) : (
@@ -784,6 +896,28 @@ function App() {
             {activeTab === "EXPLAIN" ? (
               <div className="tab-panel">
                 <h3>EXPLAIN</h3>
+                {latestEvidencePreview.length > 0 ? (
+                  <section className="evidence-peek">
+                    <h4>Latest Evidence</h4>
+                    <ul className="evidence-peek-list">
+                      {latestEvidencePreview.map((entry, index) => (
+                        <li key={`${entry.text}-${index}`} className="evidence-peek-item">
+                          <div className="evidence-tags">
+                            {entry.tags.map((tag) => (
+                              <span
+                                key={`${tag}-${index}`}
+                                className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="explain-line">{entry.text}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
                 {!explainSnapshot || explainSnapshot.lines.length === 0 ? (
                   <p className="empty-panel">No explain lines yet.</p>
                 ) : (
