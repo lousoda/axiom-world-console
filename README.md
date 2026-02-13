@@ -231,6 +231,32 @@ export SMOKE_ENTRY_TX_HASH="0x<64-hex-mainnet-tx>"
 ./scripts/preflight_demo.sh ./.env.demo.live http://127.0.0.1:8011
 ```
 
+## Deterministic Proof Artifact
+
+Generate a reproducibility artifact (two identical runs from reset, hashed from `explain/recent` lines):
+
+```bash
+export WORLD_GATE_KEY="diagkey"
+bash scripts/determinism_proof.sh http://127.0.0.1:8011
+```
+
+Optional tuning:
+
+```bash
+export DETERMINISM_TICKS=25
+export DETERMINISM_EXPLAIN_LIMIT=200
+export DETERMINISM_LIMIT_AGENTS=50
+```
+
+Output:
+
+1. `MATCH` means run 1 and run 2 hashes are identical.
+2. `MISMATCH` means non-identical traces (or mismatched starting conditions).
+3. Artifacts are written to `ARTIFACTS/`:
+   - `determinism_run1_<timestamp>.json`
+   - `determinism_run2_<timestamp>.json`
+   - `determinism_proof_<timestamp>.json`
+
 ## Manual / Legacy Commands (Reference)
 
 These are direct commands already used during verification:

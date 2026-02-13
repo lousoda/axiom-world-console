@@ -103,3 +103,24 @@ curl -sS -i https://world-model-agent-api.fly.dev/
 
 Note:
 1. Do not run restart when machine is already `started` with `1/1` checks.
+
+## 8) Determinism Artifact Check (Local or Fly)
+
+Run reproducibility proof (two runs from reset + hash compare):
+
+```bash
+export WORLD_GATE_KEY="diagkey"
+bash scripts/determinism_proof.sh http://127.0.0.1:8011
+```
+
+Fly variant:
+
+```bash
+export WORLD_GATE_KEY="$(tr -d '\n' < .demo/current_fly_key.txt)"
+bash scripts/determinism_proof.sh https://world-model-agent-api.fly.dev
+```
+
+Expected:
+1. Script prints `result: MATCH`.
+2. `ARTIFACTS/determinism_proof_<timestamp>.json` is generated.
+3. Run hashes in summary are identical.
