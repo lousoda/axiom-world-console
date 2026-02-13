@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query, Body, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Literal, Dict, Any, Optional, List
+from contextlib import asynccontextmanager
 import time
 import os
 import json
@@ -24,7 +25,12 @@ MARKET_DEFAULT_ITEM = "scrap"
 ADAPTIVE_DENIAL_STREAK_THRESHOLD = 2
 ADAPTIVE_WANDER_TICKS = 2
 
-app = FastAPI(title="World Model Agent (MVP)")
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    _validate_runtime_config()
+    yield
+
+app = FastAPI(title="World Model Agent (MVP)", lifespan=app_lifespan)
 
 # ============================================================
 # WORLD STATE
@@ -489,11 +495,6 @@ def _validate_runtime_config() -> None:
             raise RuntimeError("ALLOW_FREE_JOIN=false requires valid MONAD_TREASURY_ADDRESS")
         if _parse_min_fee_wei() <= 0:
             raise RuntimeError("ALLOW_FREE_JOIN=false requires MIN_ENTRY_FEE_WEI or MIN_ENTRY_FEE_MON")
-
-@app.on_event("startup")
-def _startup_validate_config() -> None:
-    _validate_runtime_config()
-
 
 def _rpc_call(method: str, params: list) -> Any:
     """JSON-RPC helper with explicit timeouts and stable error mapping.

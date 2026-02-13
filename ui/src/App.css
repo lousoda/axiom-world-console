@@ -229,6 +229,32 @@
   background: #15151d !important;
 }
 
+.flow-safe-row {
+  margin-top: 7px;
+}
+
+.flow-safe-btn {
+  border: 1px solid var(--ui-border);
+  border-radius: 0;
+  background: #09090d;
+  color: var(--ui-text-soft);
+  padding: 6px 9px;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.flow-safe-btn:hover {
+  background: #121218;
+}
+
+.flow-safe-active {
+  border-color: var(--ui-border-strong);
+  color: var(--ui-accent-soft);
+  background: #15151d;
+}
+
 .flow-meta {
   margin: 7px 0 0;
   color: var(--ui-text-dim);

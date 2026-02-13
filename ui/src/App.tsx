@@ -19,6 +19,11 @@ import {
   flowDelayFor,
   shouldStopFlowForStatus,
 } from "./flow/flowPolicy"
+import {
+  evidenceTagsForText,
+  extractEvidenceFlags,
+  type AutonomyEvidenceCounters,
+} from "./model/evidence"
 import { buildStateFieldGraph } from "./model/stateFieldMapper"
 import type {
   ExplainRecentSnapshot,
@@ -31,19 +36,14 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:8001"
 const STORAGE_BASE_URL = "world_console_base_url"
 const STORAGE_GATE_KEY = "world_console_gate_key"
 const STORAGE_SCENARIO = "world_console_scenario"
+const STORAGE_SAFE_MODE = "world_console_safe_mode"
 const OBSERVED_CODES = [200, 401, 402, 409, 429] as const
 const TRACE_LIMIT = 40
-const EXPLAIN_LIMIT = 40
+const EXPLAIN_LIMIT = 80
 const FLOW_LIMIT_AGENTS = 50
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN"
-type EvidenceTag = "DENIAL" | "COOLDOWN" | "ADAPTATION"
-type AutonomyEvidenceCounters = {
-  capacityDenial: number
-  cooldownPenalty: number
-  adaptationWanderOnce: number
-}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -99,51 +99,6 @@ function formatUnknown(value: unknown): string {
   }
 }
 
-function extractEvidenceFlags(line: string): AutonomyEvidenceCounters {
-  const lowered = line.toLowerCase()
-  return {
-    capacityDenial:
-      lowered.includes("earn denied") ||
-      lowered.includes("earn_denied_capacity")
-        ? 1
-        : 0,
-    cooldownPenalty:
-      lowered.includes("cooldown_penalty") ||
-      lowered.includes("cooldown penalty")
-        ? 1
-        : 0,
-    adaptationWanderOnce:
-      lowered.includes("wander once") ||
-      lowered.includes("recent capacity denial")
-        ? 1
-        : 0,
-  }
-}
-
-function evidenceTagsForText(line: string): EvidenceTag[] {
-  const lowered = line.toLowerCase()
-  const tags: EvidenceTag[] = []
-  if (
-    lowered.includes("earn denied") ||
-    lowered.includes("earn_denied_capacity")
-  ) {
-    tags.push("DENIAL")
-  }
-  if (
-    lowered.includes("cooldown_penalty") ||
-    lowered.includes("cooldown penalty")
-  ) {
-    tags.push("COOLDOWN")
-  }
-  if (
-    lowered.includes("wander once") ||
-    lowered.includes("recent capacity denial")
-  ) {
-    tags.push("ADAPTATION")
-  }
-  return tags
-}
-
 function App() {
   const [baseUrl, setBaseUrl] = useState<string>(() =>
     loadStorageValue(STORAGE_BASE_URL, DEFAULT_BASE_URL),
@@ -164,6 +119,10 @@ function App() {
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false)
 
   const [flowMode, setFlowMode] = useState<FlowMode>("PAUSE")
+  const [safeMode, setSafeMode] = useState<boolean>(() => {
+    const saved = loadStorageValue(STORAGE_SAFE_MODE, "0")
+    return saved === "1"
+  })
   const [flowCycles, setFlowCycles] = useState<number>(0)
   const [flowBackoffMs, setFlowBackoffMs] = useState<number>(0)
   const [activeTab, setActiveTab] = useState<ConsoleTab>("WORLD")
@@ -632,6 +591,19 @@ function App() {
                 ACCELERATE
               </button>
             </div>
+            <div className="flow-safe-row">
+              <button
+                className={`flow-safe-btn ${safeMode ? "flow-safe-active" : ""}`}
+                onClick={() => {
+                  const next = !safeMode
+                  setSafeMode(next)
+                  persistStorageValue(STORAGE_SAFE_MODE, next ? "1" : "0")
+                }}
+                type="button"
+              >
+                Safe Mode: {safeMode ? "ON" : "OFF"}
+              </button>
+            </div>
             <p className="flow-meta">
               Mode {flowMode} | Loop {isFlowRunning ? "on" : "off"} | Cycles{" "}
               {flowCycles}
@@ -725,7 +697,12 @@ function App() {
             {activeTab === "WORLD" ? (
               <div className="tab-panel tab-panel-world">
                 <div className="world-stage">
-                  <GraphView graph={stateFieldGraph} fx={graphFx} activity={graphActivity} />
+                  <GraphView
+                    graph={stateFieldGraph}
+                    fx={graphFx}
+                    activity={graphActivity}
+                    safeMode={safeMode}
+                  />
 
                   <button
                     className="inspector-toggle"

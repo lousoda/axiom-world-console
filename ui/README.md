@@ -1,73 +1,74 @@
-# React + TypeScript + Vite
+# World Console UI (React + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+UI observation layer for `world_model_agent`.
 
-Currently, two official plugins are available:
+The backend is authoritative; this UI only visualizes state, flow, trace, and explainability.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Local Development
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd ui
+source ~/.zshrc
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Open the URL printed by Vite (`http://localhost:5173` or next free port).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Local Validation
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd ui
+source ~/.zshrc
+npm run test
+npm run build
 ```
+
+## Production Build
+
+```bash
+cd ui
+source ~/.zshrc
+npm run build
+```
+
+Artifacts are generated in `ui/dist/`.
+
+## Public Deploy Patterns
+
+### Recommended: Static UI + Reverse Proxy to API
+
+If UI is hosted separately from Fly API, use same-origin proxy routing:
+
+1. Configure host rewrite:
+   - `/api/* -> https://world-model-agent-api.fly.dev/:splat`
+2. In UI, set `API Endpoint` to `/api`
+
+Why: avoids browser CORS issues without backend changes.
+
+Example `Netlify _redirects`:
+
+```text
+/api/* https://world-model-agent-api.fly.dev/:splat 200
+```
+
+### Alternative: Same-Origin Hosting with API
+
+Serve UI and API from one origin (for example via reverse proxy in front of Fly app).
+
+### Not Recommended Near Deadline
+
+Enabling broad backend CORS policy only for UI hosting flexibility.  
+This changes API security surface and should be a separate decision.
+
+## Demo Smoke Checklist (UI)
+
+1. `Validate Link` returns status `200`.
+2. `Load Scene` with `autonomy_proof`.
+3. Run `LIVE` 10+ cycles.
+4. `Autonomy Evidence` counters become `> 0`.
+5. `EXPLAIN` shows tagged events:
+   - `DENIAL`
+   - `COOLDOWN`
+   - `ADAPTATION`
+

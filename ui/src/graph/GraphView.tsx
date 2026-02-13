@@ -31,6 +31,7 @@ type GraphViewProps = {
   graph: StateFieldGraph
   fx?: GraphFx
   activity?: GraphActivity
+  safeMode?: boolean
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -146,7 +147,7 @@ function toVisEdges(edges: StateFieldGraph["edges"]): Edge[] {
   }))
 }
 
-export function GraphView({ graph, fx, activity }: GraphViewProps) {
+export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const networkRef = useRef<Network | null>(null)
@@ -210,6 +211,7 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
     let rafId = 0
     let lastUpdate = 0
     let lastRedraw = 0
+    let lastOverlay = 0
     let overlayW = 0
     let overlayH = 0
     let overlayDpr = 0
@@ -269,6 +271,7 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
       const queued = Math.max(0, activityState.queued | 0)
       const runBoost = activityState.running ? 1 : 0.6
       const t = ts * 0.001
+      const overlayFactor = safeMode ? 0.56 : 1
 
       let coreX = width * 0.5
       let coreY = height * 0.52
@@ -293,7 +296,10 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
       ctx.arc(coreX, coreY, haloRadius + Math.sin(t * 0.9) * 3, 0, TWO_PI)
       ctx.stroke()
 
-      const ringCount = Math.min(16, Math.max(3, agents * 2 + 3))
+      const ringCount = Math.min(
+        16,
+        Math.max(3, Math.round((agents * 2 + 3) * overlayFactor)),
+      )
       for (let i = 0; i < ringCount; i += 1) {
         const phase = i * 0.73 + activityState.cycle * 0.11
         const angle = t * (0.36 + modeBoost * 0.42) + phase
@@ -309,7 +315,10 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
         ctx.fill()
       }
 
-      const sparkCount = Math.min(72, Math.max(12, agents * 10 + queued * 5))
+      const sparkCount = Math.min(
+        72,
+        Math.max(12, Math.round((agents * 10 + queued * 5) * overlayFactor)),
+      )
       for (let i = 0; i < sparkCount; i += 1) {
         const seed = i * 0.618 + activityState.cycle * 0.057
         const angle = t * (0.2 + modeBoost * 0.24) + seed * TWO_PI
@@ -326,7 +335,10 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
       }
 
       const anchorPool = motionNodesRef.current
-      const anchorCount = Math.min(16, Math.max(6, agents * 4 + queued))
+      const anchorCount = Math.min(
+        16,
+        Math.max(6, Math.round((agents * 4 + queued) * overlayFactor)),
+      )
       if (anchorPool.length > 0) {
         const stride = Math.max(1, Math.floor(anchorPool.length / anchorCount))
         const anchorIds: string[] = []
@@ -415,7 +427,10 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
     const tick = (ts: number) => {
       const network = networkRef.current
       if (network) {
-        if (ts - lastUpdate >= 58) {
+        const nodeUpdateMs = safeMode ? 92 : 58
+        const redrawMs = safeMode ? 56 : 34
+        const overlayMs = safeMode ? 52 : 16
+        if (ts - lastUpdate >= nodeUpdateMs) {
           const nodesData = (
             (network as unknown as {
               body?: { data?: { nodes?: { update: (items: Node[]) => void } } }
@@ -433,11 +448,14 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
           }
           lastUpdate = ts
         }
-        if (ts - lastRedraw >= 34) {
+        if (ts - lastRedraw >= redrawMs) {
           network.redraw()
           lastRedraw = ts
         }
-        drawActivityOverlay(ts, network)
+        if (ts - lastOverlay >= overlayMs) {
+          drawActivityOverlay(ts, network)
+          lastOverlay = ts
+        }
       }
       rafId = window.requestAnimationFrame(tick)
     }
@@ -447,7 +465,7 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
     return () => {
       window.cancelAnimationFrame(rafId)
     }
-  }, [activity])
+  }, [activity, safeMode])
 
   useEffect(() => {
     if (!networkRef.current) {
@@ -461,8 +479,9 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
     })
 
     const sampleNodes = graph.nodes.filter((node) => node.kind === "sample")
+    const motionStride = safeMode ? 8 : 5
     motionNodesRef.current = sampleNodes
-      .filter((_, index) => index % 5 === 0)
+      .filter((_, index) => index % motionStride === 0)
       .map((node) => {
         const seed = hashString(node.id)
         const amp = 0.18 + ((seed % 100) / 100) * 0.42
@@ -488,7 +507,7 @@ export function GraphView({ graph, fx, activity }: GraphViewProps) {
       })
       fittedRef.current = true
     }
-  }, [graph])
+  }, [graph, safeMode])
 
   return (
     <div className="graph-canvas" style={fxStyle}>

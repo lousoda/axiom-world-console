@@ -64,6 +64,7 @@ Operational / generated artifacts:
 - Ops checklist (single source for operator notes + sanity commands): `docs/OPS_CHECKLIST.md`
 - UI/product differentiation plan (post-freeze): `docs/UI_PRODUCT_PLAN.md`
 - UI execution checklist (must/should/bonus + QA gates): `docs/UI_EXECUTION_CHECKLIST.md`
+- UI public deploy runbook (static host + proxy routing): `docs/UI_PUBLIC_DEPLOY_RUNBOOK.md`
 - One-command gate: `scripts/demo_gate.sh`
 - `Refresh`
 
