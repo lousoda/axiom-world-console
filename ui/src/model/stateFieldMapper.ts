@@ -60,6 +60,15 @@ function metricOr(defaultValue: number, value: number | undefined): number {
   return value
 }
 
+function scaledCount(
+  value: number,
+  density: number,
+  min: number,
+  max: number,
+): number {
+  return clamp(Math.round(value * density), min, max)
+}
+
 export function buildStateFieldGraph(input: {
   world: WorldSnapshot | null
   metrics: MetricsSnapshot | null
@@ -78,6 +87,7 @@ export function buildStateFieldGraph(input: {
     capPerTick,
   )
   const pressure = clamp((capPerTick - capLeft) / capPerTick, 0, 1)
+  const visualDensity = clamp(0.68 + pressure * 0.12, 0.66, 0.84)
 
   const coreMass = 24 + agents * 4 + Math.min(logs / 10, 24)
   const inertiaMass = 14 + Math.min(tick / 12, 20)
@@ -232,6 +242,7 @@ export function buildStateFieldGraph(input: {
   const sampleNodes: StateFieldNode[] = []
   let sampleIndex = 0
   let edgeIndex = 0
+  const edgeKeepThreshold = clamp(0.64 - visualDensity * 0.2, 0.42, 0.5)
 
   const pushSampleNode = (inputNode: {
     x: number
@@ -271,10 +282,11 @@ export function buildStateFieldGraph(input: {
 
   const coreCenter = anchorCenters.get("state_core") ?? { x: 0, y: 0 }
   const sphereRadius = 236 + agents * 8 + pressure * 36 + Math.min(logs / 24, 38)
-  const primaryDustCount = clamp(
-    Math.round(760 + agents * 80 + Math.min(logs, 1100) * 0.28),
-    760,
-    1360,
+  const primaryDustCount = scaledCount(
+    clamp(Math.round(760 + agents * 80 + Math.min(logs, 1100) * 0.28), 760, 1360),
+    visualDensity,
+    580,
+    1220,
   )
 
   const coolPockets = [
@@ -299,7 +311,7 @@ export function buildStateFieldGraph(input: {
 
   const connectChain = (ids: string[], stride: number) => {
     for (let i = stride; i < ids.length; i += 1) {
-      const keep = pseudo(3800 + i * 1.71 + stride * 11) > 0.42
+      const keep = pseudo(3800 + i * 1.71 + stride * 11) > edgeKeepThreshold
       if (!keep) {
         continue
       }
@@ -335,7 +347,7 @@ export function buildStateFieldGraph(input: {
       border: color.border,
     })
 
-    if (i > 0 && i % 9 === 0 && radius < sphereRadius * 0.54) {
+    if (i > 0 && i % 10 === 0 && radius < sphereRadius * 0.54) {
       edges.push({
         id: `e_sample_${edgeIndex++}`,
         kind: "sample",
@@ -348,7 +360,7 @@ export function buildStateFieldGraph(input: {
   }
 
   // Extra interior micro-haze for volumetric feel.
-  const interiorHazeCount = 280
+  const interiorHazeCount = scaledCount(280, visualDensity, 190, 300)
   for (let i = 0; i < interiorHazeCount; i += 1) {
     const a = pseudo(700 + i * 1.17)
     const b = pseudo(740 + i * 1.73)
@@ -369,7 +381,7 @@ export function buildStateFieldGraph(input: {
   }
 
   // Mid-shell haze to populate the sphere beyond center.
-  const midShellCount = 260
+  const midShellCount = scaledCount(260, visualDensity, 180, 280)
   for (let i = 0; i < midShellCount; i += 1) {
     const a = pseudo(920 + i * 1.27)
     const b = pseudo(960 + i * 1.71)
@@ -391,14 +403,19 @@ export function buildStateFieldGraph(input: {
   }
 
   // Moon-like albedo patches inside the sphere.
-  const albedoPatchCount = 9
+  const albedoPatchCount = scaledCount(9, visualDensity, 6, 9)
   for (let patch = 0; patch < albedoPatchCount; patch += 1) {
     const patchAngle = pseudo(3880 + patch * 2.37) * TWO_PI
     const patchRadius = Math.pow(pseudo(3920 + patch * 2.17), 0.95) * sphereRadius * 0.9
     const patchX = coreCenter.x + Math.cos(patchAngle) * patchRadius
     const patchY = coreCenter.y + Math.sin(patchAngle) * patchRadius
     const spread = 18 + pseudo(3960 + patch * 2.63) * 44
-    const points = 96 + Math.floor(pseudo(4000 + patch * 2.81) * 120)
+    const points = scaledCount(
+      96 + Math.floor(pseudo(4000 + patch * 2.81) * 120),
+      visualDensity,
+      70,
+      170,
+    )
     const palette = coolPockets[patch % coolPockets.length]
     const patchIds: string[] = []
 
@@ -425,10 +442,11 @@ export function buildStateFieldGraph(input: {
   }
 
   // Inner constellation clusters.
-  const innerClusterCount = clamp(
-    13 + agents + Math.floor(input.traceCount / 12),
-    13,
-    24,
+  const innerClusterCount = scaledCount(
+    clamp(13 + agents + Math.floor(input.traceCount / 12), 13, 24),
+    visualDensity,
+    11,
+    22,
   )
   let previousClusterBridgeId = ""
   for (let cluster = 0; cluster < innerClusterCount; cluster += 1) {
@@ -446,8 +464,18 @@ export function buildStateFieldGraph(input: {
       (pseudo(1300 + cluster * 3.61) - 0.5) * 16
     const spread = 18 + pseudo(1400 + cluster * 2.91) * 24
     const coreSpread = 6 + pseudo(1450 + cluster * 2.49) * 10
-    const corePoints = 18 + Math.floor(pseudo(1470 + cluster * 2.27) * 16)
-    const clusterPoints = 28 + Math.floor(pseudo(1500 + cluster * 3.13) * 18)
+    const corePoints = scaledCount(
+      18 + Math.floor(pseudo(1470 + cluster * 2.27) * 16),
+      visualDensity,
+      14,
+      28,
+    )
+    const clusterPoints = scaledCount(
+      28 + Math.floor(pseudo(1500 + cluster * 3.13) * 18),
+      visualDensity,
+      20,
+      36,
+    )
     const clusterIds: string[] = []
     const coreIds: string[] = []
 
@@ -535,11 +563,16 @@ export function buildStateFieldGraph(input: {
   }
 
   // Outer halo made from broken arcs.
-  const arcBands = 8
+  const arcBands = scaledCount(8, visualDensity, 6, 8)
   for (let band = 0; band < arcBands; band += 1) {
     const start = pseudo(2100 + band * 4.19) * TWO_PI
     const span = 0.32 + pseudo(2200 + band * 3.77) * 0.92
-    const points = 24 + Math.floor(pseudo(2300 + band * 2.91) * 16)
+    const points = scaledCount(
+      24 + Math.floor(pseudo(2300 + band * 2.91) * 16),
+      visualDensity,
+      18,
+      32,
+    )
     const bandRadius = sphereRadius * (0.94 + pseudo(2400 + band * 2.33) * 0.22)
     let prevId = ""
 
@@ -577,14 +610,19 @@ export function buildStateFieldGraph(input: {
   }
 
   // Contour clumps: visible dense pockets on the sphere boundary.
-  const contourClumpCount = 14
+  const contourClumpCount = scaledCount(14, visualDensity, 10, 13)
   for (let clump = 0; clump < contourClumpCount; clump += 1) {
     const angle = pseudo(4700 + clump * 2.49) * TWO_PI
     const radius = sphereRadius * (0.9 + pseudo(4740 + clump * 2.17) * 0.16)
     const centerX = coreCenter.x + Math.cos(angle) * radius
     const centerY = coreCenter.y + Math.sin(angle) * radius
     const spread = 8 + pseudo(4780 + clump * 2.73) * 13
-    const points = 18 + Math.floor(pseudo(4820 + clump * 2.31) * 22)
+    const points = scaledCount(
+      18 + Math.floor(pseudo(4820 + clump * 2.31) * 22),
+      visualDensity,
+      14,
+      28,
+    )
     const ids: string[] = []
     const pocketColor = coolPockets[clump % coolPockets.length]
 
@@ -610,14 +648,19 @@ export function buildStateFieldGraph(input: {
   }
 
   // Small peripheral islands around the halo.
-  const islandCount = 12
+  const islandCount = scaledCount(12, visualDensity, 9, 12)
   for (let island = 0; island < islandCount; island += 1) {
     const angle = pseudo(3000 + island * 2.89) * TWO_PI
     const radius = sphereRadius * (0.9 + pseudo(3100 + island * 2.31) * 0.28)
     const centerX = Math.cos(angle) * radius
     const centerY = Math.sin(angle) * radius
     const spread = 6 + pseudo(3200 + island * 1.97) * 11
-    const points = 8 + Math.floor(pseudo(3300 + island * 2.17) * 7)
+    const points = scaledCount(
+      8 + Math.floor(pseudo(3300 + island * 2.17) * 7),
+      visualDensity,
+      7,
+      13,
+    )
     const ids: string[] = []
 
     for (let i = 0; i < points; i += 1) {
@@ -640,5 +683,19 @@ export function buildStateFieldGraph(input: {
     connectChain(ids, 1)
   }
 
-  return { nodes: [...nodes, ...sampleNodes], edges }
+  const allNodes = [...nodes, ...sampleNodes]
+  const MAX_TOTAL_NODES = 4200
+  const MAX_TOTAL_EDGES = 3600
+
+  if (allNodes.length <= MAX_TOTAL_NODES && edges.length <= MAX_TOTAL_EDGES) {
+    return { nodes: allNodes, edges }
+  }
+
+  const trimmedNodes = allNodes.slice(0, MAX_TOTAL_NODES)
+  const nodeIds = new Set(trimmedNodes.map((node) => node.id))
+  const trimmedEdges = edges
+    .filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to))
+    .slice(0, MAX_TOTAL_EDGES)
+
+  return { nodes: trimmedNodes, edges: trimmedEdges }
 }

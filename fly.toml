@@ -15,7 +15,7 @@ primary_region = "ams"
   force_https = true
   auto_start_machines = true
   auto_stop_machines = false
-  min_machines_running = 1
+  min_machines_running = 2
 
   [[http_service.checks]]
     interval = "15s"

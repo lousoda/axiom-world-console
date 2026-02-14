@@ -22,3 +22,7 @@ world_snapshot.json
 
 # Build/report artifacts
 *.patch
+
+# UI build artifacts/deps are not needed in API image context
+ui/node_modules
+ui/dist

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Body, Header, Request
+from fastapi import FastAPI, HTTPException, Query, Body, Header, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Literal, Dict, Any, Optional, List
@@ -7,6 +7,10 @@ import time
 import os
 import json
 import inspect
+import base64
+import hashlib
+import hmac
+import secrets
 from threading import Lock, RLock
 from pathlib import Path
 from dotenv import load_dotenv
@@ -124,23 +128,161 @@ def _env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int
     return value
 
 DEBUG_ENDPOINTS_ENABLED = _env_bool("DEBUG_ENDPOINTS_ENABLED", False)
-REQUIRE_API_KEY = _env_bool("REQUIRE_API_KEY", False)
+IS_FLY_RUNTIME = bool((os.getenv("FLY_APP_NAME") or "").strip())
+SECURITY_AUTOCONFIG = _env_bool("SECURITY_AUTOCONFIG", True)
+
+
+def _env_bool_with_autosec(
+    name: str,
+    default_off_fly: bool,
+    default_on_fly: bool,
+) -> bool:
+    """
+    Autoconfig behavior:
+    - if variable is explicitly set -> use explicit value
+    - if unset and running on Fly with SECURITY_AUTOCONFIG=true -> use secure Fly default
+    - otherwise -> use local/off-fly default
+    """
+    if os.getenv(name) is not None:
+        return _env_bool(name, default_off_fly)
+    if SECURITY_AUTOCONFIG and IS_FLY_RUNTIME:
+        return default_on_fly
+    return default_off_fly
+
+
+REQUIRE_API_KEY = _env_bool_with_autosec("REQUIRE_API_KEY", False, True)
+REQUIRE_API_KEY_FOR_READS = _env_bool_with_autosec("REQUIRE_API_KEY_FOR_READS", False, False)
 API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-World-Gate").strip() or "X-World-Gate"
 WORLD_GATE_KEY = os.getenv("WORLD_GATE_KEY", "").strip()
+COOKIE_AUTH_ENABLED = _env_bool_with_autosec("COOKIE_AUTH_ENABLED", False, True)
+UI_AUTH_PASSWORD = os.getenv("UI_AUTH_PASSWORD", "").strip()
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "world_console_session").strip() or "world_console_session"
+SESSION_TTL_SEC = _to_non_negative_int(os.getenv("SESSION_TTL_SEC", "43200"), 43200)
+if SESSION_TTL_SEC <= 0:
+    SESSION_TTL_SEC = 43200
+SESSION_SIGNING_KEY = os.getenv("SESSION_SIGNING_KEY", "").strip()
+if not SESSION_SIGNING_KEY and WORLD_GATE_KEY:
+    # Keep bootstrap simple for deployment: if no dedicated key was set,
+    # reuse WORLD_GATE_KEY for session signature.
+    SESSION_SIGNING_KEY = WORLD_GATE_KEY
+COOKIE_AUTH_ACTIVE = COOKIE_AUTH_ENABLED and bool(UI_AUTH_PASSWORD) and bool(SESSION_SIGNING_KEY)
 
-RATE_LIMIT_ENABLED = _env_bool("RATE_LIMIT_ENABLED", False)
-RATE_LIMIT_MAX_REQUESTS = _to_non_negative_int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "60"), 60)
+RATE_LIMIT_ENABLED = _env_bool_with_autosec("RATE_LIMIT_ENABLED", False, True)
+RATE_LIMIT_READS_ENABLED = _env_bool_with_autosec("RATE_LIMIT_READS_ENABLED", False, False)
+
+default_rate_limit_max_requests = 240 if (SECURITY_AUTOCONFIG and IS_FLY_RUNTIME) else 60
+RATE_LIMIT_MAX_REQUESTS = _to_non_negative_int(
+    os.getenv("RATE_LIMIT_MAX_REQUESTS", str(default_rate_limit_max_requests)),
+    default_rate_limit_max_requests,
+)
 RATE_LIMIT_WINDOW_SEC = _to_non_negative_int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"), 60)
 if RATE_LIMIT_MAX_REQUESTS <= 0:
-    RATE_LIMIT_MAX_REQUESTS = 60
+    RATE_LIMIT_MAX_REQUESTS = default_rate_limit_max_requests
 if RATE_LIMIT_WINDOW_SEC <= 0:
     RATE_LIMIT_WINDOW_SEC = 60
 
 _RATE_LIMIT_BUCKETS: Dict[str, List[float]] = {}
 _RATE_LIMIT_LOCK = Lock()
 
+_AUTH_OPEN_POST_PATHS = {"/auth/login", "/auth/logout"}
+
+
+def _request_path(request: Request) -> str:
+    if request.url and request.url.path:
+        return request.url.path
+    return request.scope.get("path", "") or ""
+
+
 def _is_mutating_request(request: Request) -> bool:
-    return request.method.upper() == "POST"
+    if request.method.upper() != "POST":
+        return False
+    path = _request_path(request)
+    if path in _AUTH_OPEN_POST_PATHS:
+        return False
+    return True
+
+
+def _is_protected_read_request(request: Request) -> bool:
+    """
+    Optional hardening for public deployments:
+    - protect GET endpoints except root and debug surface.
+    """
+    if request.method.upper() != "GET":
+        return False
+    if not (REQUIRE_API_KEY_FOR_READS or RATE_LIMIT_READS_ENABLED):
+        return False
+
+    path = _request_path(request)
+    if path == "/" or path.startswith("/debug/"):
+        return False
+    if path.startswith("/auth/"):
+        return False
+    return True
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> Optional[bytes]:
+    if not raw:
+        return None
+    try:
+        padding = "=" * ((4 - (len(raw) % 4)) % 4)
+        return base64.urlsafe_b64decode((raw + padding).encode("ascii"))
+    except Exception:
+        return None
+
+
+def _issue_session_token() -> str:
+    if not SESSION_SIGNING_KEY:
+        return ""
+    expires_at = int(time.time()) + SESSION_TTL_SEC
+    nonce = secrets.token_hex(8)
+    payload = f"{expires_at}:{nonce}".encode("utf-8")
+    signature = hmac.new(
+        SESSION_SIGNING_KEY.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest().encode("ascii")
+    return _b64url_encode(payload + b":" + signature)
+
+
+def _validate_session_token(token: str) -> bool:
+    if not token or not SESSION_SIGNING_KEY:
+        return False
+
+    decoded = _b64url_decode(token)
+    if not decoded:
+        return False
+
+    try:
+        payload, signature = decoded.rsplit(b":", 1)
+        expires_at_raw, _nonce = payload.decode("utf-8").split(":", 1)
+        expires_at = int(expires_at_raw)
+    except Exception:
+        return False
+
+    if expires_at < int(time.time()):
+        return False
+
+    expected_signature = hmac.new(
+        SESSION_SIGNING_KEY.encode("utf-8"),
+        payload,
+        hashlib.sha256,
+    ).hexdigest()
+    try:
+        got_signature = signature.decode("ascii")
+    except Exception:
+        return False
+    return hmac.compare_digest(got_signature, expected_signature)
+
+
+def _has_valid_session_cookie(request: Request) -> bool:
+    if not COOKIE_AUTH_ACTIVE:
+        return False
+    token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    return _validate_session_token(token)
 
 def _check_rate_limit(client_key: str) -> Optional[int]:
     now = time.time()
@@ -165,18 +307,14 @@ def _assert_debug_enabled() -> None:
 
 @app.middleware("http")
 async def security_guard(request: Request, call_next):
-    if _is_mutating_request(request):
-        if REQUIRE_API_KEY:
-            if not WORLD_GATE_KEY:
-                return JSONResponse(
-                    status_code=500,
-                    content={"detail": "Server misconfigured: WORLD_GATE_KEY is required when REQUIRE_API_KEY=true"},
-                )
-            got = request.headers.get(API_KEY_HEADER_NAME, "")
-            if got != WORLD_GATE_KEY:
-                return JSONResponse(status_code=401, content={"detail": f"Missing or invalid {API_KEY_HEADER_NAME}"})
+    protect_mutating = _is_mutating_request(request)
+    protect_read = _is_protected_read_request(request)
 
-        if RATE_LIMIT_ENABLED:
+    if protect_mutating or protect_read:
+        should_rate_limit = (protect_mutating and RATE_LIMIT_ENABLED) or (
+            protect_read and RATE_LIMIT_READS_ENABLED
+        )
+        if should_rate_limit:
             client_key = "unknown"
             if request.client and request.client.host:
                 client_key = request.client.host
@@ -187,6 +325,34 @@ async def security_guard(request: Request, call_next):
                     status_code=429,
                     content={"detail": "Rate limit exceeded"},
                     headers={"Retry-After": str(retry_after)},
+                )
+
+        should_require_key = (protect_mutating and REQUIRE_API_KEY) or (
+            protect_read and REQUIRE_API_KEY_FOR_READS
+        )
+        if should_require_key:
+            if not WORLD_GATE_KEY:
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "detail": (
+                            "Server misconfigured: WORLD_GATE_KEY is required when "
+                            "REQUIRE_API_KEY=true or REQUIRE_API_KEY_FOR_READS=true"
+                        )
+                    },
+                )
+            got = request.headers.get(API_KEY_HEADER_NAME, "")
+            has_header_key = hmac.compare_digest(got, WORLD_GATE_KEY)
+            has_session_cookie = _has_valid_session_cookie(request)
+            if not has_header_key and not has_session_cookie:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": (
+                            f"Missing or invalid {API_KEY_HEADER_NAME} "
+                            "or authenticated session"
+                        )
+                    },
                 )
 
     return await call_next(request)
@@ -214,6 +380,9 @@ def find_agent(agent_id: int) -> Dict[str, Any]:
 # ============================================================
 
 DEFAULT_SNAPSHOT_PATH = Path(os.getenv("WORLD_SNAPSHOT_PATH", "world_snapshot.json"))
+SNAPSHOT_BASE_DIR = Path(
+    os.getenv("WORLD_SNAPSHOT_BASE_DIR", str(Path.cwd()))
+).resolve()
 LAST_SAVED: Optional[dict] = None  # metadata for the latest snapshot save
 
 def _snapshot_path(path: Optional[str] = None) -> Path:
@@ -222,6 +391,33 @@ def _snapshot_path(path: Optional[str] = None) -> Path:
     if p.exists() and p.is_dir():
         p = p / "world_snapshot.json"
     return p
+
+
+def _sanitize_snapshot_request_path(path: Optional[str]) -> Optional[str]:
+    if path is None:
+        return None
+
+    raw = str(path).strip()
+    if not raw:
+        return None
+
+    candidate_input = Path(raw)
+    if candidate_input.is_absolute():
+        raise HTTPException(
+            status_code=400,
+            detail="Snapshot path must be relative to snapshot base directory",
+        )
+
+    candidate = (SNAPSHOT_BASE_DIR / candidate_input).resolve()
+    try:
+        candidate.relative_to(SNAPSHOT_BASE_DIR)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Snapshot path escapes snapshot base directory",
+        )
+
+    return str(candidate)
 
 def save_world_state(path: Optional[str] = None, include_logs: bool = True) -> dict:
     """
@@ -435,21 +631,22 @@ class PersistLoadRequest(BaseModel):
 
 @app.get("/persist/status")
 def persist_status(path: Optional[str] = None):
-    return persistence_status(path=path)
+    return persistence_status(path=_sanitize_snapshot_request_path(path))
 
 @app.post("/persist/save")
 def persist_save(req: PersistSaveRequest = Body(default=PersistSaveRequest())):
     with WORLD_STATE_LOCK:
-        target = _snapshot_path(req.path)
+        safe_path = _sanitize_snapshot_request_path(req.path)
+        target = _snapshot_path(safe_path)
         # Log BEFORE saving so the snapshot includes this event.
         log("persist_save", {"path": str(target), "include_logs": req.include_logs})
-        res = save_world_state(path=req.path, include_logs=req.include_logs)
+        res = save_world_state(path=safe_path, include_logs=req.include_logs)
         return res
 
 @app.post("/persist/load")
 def persist_load(req: PersistLoadRequest = Body(default=PersistLoadRequest())):
     with WORLD_STATE_LOCK:
-        return load_world_state(path=req.path)
+        return load_world_state(path=_sanitize_snapshot_request_path(req.path))
 
 # ============================================================
 # MONAD MAINNET (token-gated entry)
@@ -485,8 +682,14 @@ def _parse_min_fee_wei() -> int:
     return 0
 
 def _validate_runtime_config() -> None:
-    if REQUIRE_API_KEY and not WORLD_GATE_KEY:
-        raise RuntimeError("REQUIRE_API_KEY=true but WORLD_GATE_KEY is empty")
+    if (REQUIRE_API_KEY or REQUIRE_API_KEY_FOR_READS) and not WORLD_GATE_KEY:
+        raise RuntimeError(
+            "REQUIRE_API_KEY/REQUIRE_API_KEY_FOR_READS enabled but WORLD_GATE_KEY is empty"
+        )
+    if COOKIE_AUTH_ENABLED and UI_AUTH_PASSWORD and not SESSION_SIGNING_KEY:
+        raise RuntimeError(
+            "COOKIE_AUTH_ENABLED with UI_AUTH_PASSWORD requires SESSION_SIGNING_KEY or WORLD_GATE_KEY"
+        )
 
     if not ALLOW_FREE_JOIN:
         if not MONAD_RPC_URL:
@@ -495,6 +698,54 @@ def _validate_runtime_config() -> None:
             raise RuntimeError("ALLOW_FREE_JOIN=false requires valid MONAD_TREASURY_ADDRESS")
         if _parse_min_fee_wei() <= 0:
             raise RuntimeError("ALLOW_FREE_JOIN=false requires MIN_ENTRY_FEE_WEI or MIN_ENTRY_FEE_MON")
+
+
+class AuthLoginRequest(BaseModel):
+    password: str = Field(default="", min_length=1, max_length=256)
+
+
+@app.get("/auth/session")
+def auth_session(request: Request):
+    return {
+        "ok": True,
+        "cookie_auth_enabled": COOKIE_AUTH_ACTIVE,
+        "authenticated": _has_valid_session_cookie(request),
+        "api_key_header": API_KEY_HEADER_NAME,
+        "session_cookie_name": SESSION_COOKIE_NAME,
+    }
+
+
+@app.post("/auth/login")
+def auth_login(req: AuthLoginRequest, response: Response):
+    if not COOKIE_AUTH_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not UI_AUTH_PASSWORD:
+        raise HTTPException(status_code=503, detail="UI_AUTH_PASSWORD is not configured")
+    if not SESSION_SIGNING_KEY:
+        raise HTTPException(status_code=503, detail="SESSION_SIGNING_KEY is not configured")
+    if not hmac.compare_digest(req.password, UI_AUTH_PASSWORD):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = _issue_session_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="Failed to create session token")
+
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_TTL_SEC,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return {"ok": True, "authenticated": True, "expires_in_sec": SESSION_TTL_SEC}
+
+
+@app.post("/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"ok": True, "authenticated": False}
 
 def _rpc_call(method: str, params: list) -> Any:
     """JSON-RPC helper with explicit timeouts and stable error mapping.

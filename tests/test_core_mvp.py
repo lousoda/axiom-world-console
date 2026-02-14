@@ -309,6 +309,372 @@ def test_world_gate_header_enforced_for_join():
         app.ALLOW_FREE_JOIN = prev_allow
 
 
+def test_auth_login_path_is_not_blocked_by_world_gate_requirement():
+    prev_require = app.REQUIRE_API_KEY
+    prev_rate_enabled = app.RATE_LIMIT_ENABLED
+
+    try:
+        app.REQUIRE_API_KEY = True
+        app.RATE_LIMIT_ENABLED = False
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/auth/login",
+            "raw_path": b"/auth/login",
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req = Request(scope)
+        out = asyncio.run(app.security_guard(req, ok_next))
+        assert out.status_code == 200
+    finally:
+        app.REQUIRE_API_KEY = prev_require
+        app.RATE_LIMIT_ENABLED = prev_rate_enabled
+
+
+def test_auth_session_path_is_not_blocked_by_read_guard():
+    prev_require_reads = app.REQUIRE_API_KEY_FOR_READS
+    prev_rate_reads = app.RATE_LIMIT_READS_ENABLED
+
+    try:
+        app.REQUIRE_API_KEY_FOR_READS = True
+        app.RATE_LIMIT_READS_ENABLED = True
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/auth/session",
+            "raw_path": b"/auth/session",
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req = Request(scope)
+        out = asyncio.run(app.security_guard(req, ok_next))
+        assert out.status_code == 200
+    finally:
+        app.REQUIRE_API_KEY_FOR_READS = prev_require_reads
+        app.RATE_LIMIT_READS_ENABLED = prev_rate_reads
+
+
+def test_world_gate_guard_accepts_valid_session_cookie():
+    prev_require = app.REQUIRE_API_KEY
+    prev_require_reads = app.REQUIRE_API_KEY_FOR_READS
+    prev_gate_key = app.WORLD_GATE_KEY
+    prev_cookie_enabled = app.COOKIE_AUTH_ENABLED
+    prev_cookie_active = app.COOKIE_AUTH_ACTIVE
+    prev_ui_password = app.UI_AUTH_PASSWORD
+    prev_sign_key = app.SESSION_SIGNING_KEY
+    prev_cookie_name = app.SESSION_COOKIE_NAME
+    prev_ttl = app.SESSION_TTL_SEC
+
+    try:
+        app.REQUIRE_API_KEY = True
+        app.REQUIRE_API_KEY_FOR_READS = True
+        app.WORLD_GATE_KEY = "header-only-key"
+        app.COOKIE_AUTH_ENABLED = True
+        app.UI_AUTH_PASSWORD = "ui-password"
+        app.SESSION_SIGNING_KEY = "test-sign-key"
+        app.SESSION_COOKIE_NAME = "world_console_session"
+        app.SESSION_TTL_SEC = 600
+        app.COOKIE_AUTH_ACTIVE = True
+
+        token = app._issue_session_token()
+        assert isinstance(token, str) and len(token) > 20
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope_post = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/scenario/basic_auto",
+            "raw_path": b"/scenario/basic_auto",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"cookie", f"{app.SESSION_COOKIE_NAME}={token}".encode("utf-8")),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_post = Request(scope_post)
+        post_allowed = asyncio.run(app.security_guard(req_post, ok_next))
+        assert post_allowed.status_code == 200
+
+        scope_get = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/metrics",
+            "raw_path": b"/metrics",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"cookie", f"{app.SESSION_COOKIE_NAME}={token}".encode("utf-8")),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_get = Request(scope_get)
+        get_allowed = asyncio.run(app.security_guard(req_get, ok_next))
+        assert get_allowed.status_code == 200
+
+        scope_bad_cookie = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/scenario/basic_auto",
+            "raw_path": b"/scenario/basic_auto",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"cookie", f"{app.SESSION_COOKIE_NAME}=broken-token".encode("utf-8")),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_bad_cookie = Request(scope_bad_cookie)
+        blocked = asyncio.run(app.security_guard(req_bad_cookie, ok_next))
+        assert blocked.status_code == 401
+    finally:
+        app.REQUIRE_API_KEY = prev_require
+        app.REQUIRE_API_KEY_FOR_READS = prev_require_reads
+        app.WORLD_GATE_KEY = prev_gate_key
+        app.COOKIE_AUTH_ENABLED = prev_cookie_enabled
+        app.COOKIE_AUTH_ACTIVE = prev_cookie_active
+        app.UI_AUTH_PASSWORD = prev_ui_password
+        app.SESSION_SIGNING_KEY = prev_sign_key
+        app.SESSION_COOKIE_NAME = prev_cookie_name
+        app.SESSION_TTL_SEC = prev_ttl
+
+
+def test_world_gate_failed_attempts_are_rate_limited():
+    prev_require = app.REQUIRE_API_KEY
+    prev_header = app.API_KEY_HEADER_NAME
+    prev_gate_key = app.WORLD_GATE_KEY
+    prev_allow = app.ALLOW_FREE_JOIN
+    prev_rate_enabled = app.RATE_LIMIT_ENABLED
+    prev_rate_max = app.RATE_LIMIT_MAX_REQUESTS
+    prev_rate_window = app.RATE_LIMIT_WINDOW_SEC
+    prev_rate_buckets = {k: list(v) for k, v in app._RATE_LIMIT_BUCKETS.items()}
+
+    app.reset_in_place()
+
+    try:
+        app.REQUIRE_API_KEY = True
+        app.API_KEY_HEADER_NAME = "X-World-Gate"
+        app.WORLD_GATE_KEY = "test-world-gate-key"
+        app.ALLOW_FREE_JOIN = True
+        app.RATE_LIMIT_ENABLED = True
+        app.RATE_LIMIT_MAX_REQUESTS = 1
+        app.RATE_LIMIT_WINDOW_SEC = 60
+        app._RATE_LIMIT_BUCKETS.clear()
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope_bad_header = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/join",
+            "raw_path": b"/join",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"x-world-gate", b"wrong-key"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+
+        req1 = Request(scope_bad_header)
+        first = asyncio.run(app.security_guard(req1, ok_next))
+        assert first.status_code == 401
+
+        req2 = Request(scope_bad_header)
+        second = asyncio.run(app.security_guard(req2, ok_next))
+        assert second.status_code == 429
+    finally:
+        app.REQUIRE_API_KEY = prev_require
+        app.API_KEY_HEADER_NAME = prev_header
+        app.WORLD_GATE_KEY = prev_gate_key
+        app.ALLOW_FREE_JOIN = prev_allow
+        app.RATE_LIMIT_ENABLED = prev_rate_enabled
+        app.RATE_LIMIT_MAX_REQUESTS = prev_rate_max
+        app.RATE_LIMIT_WINDOW_SEC = prev_rate_window
+        app._RATE_LIMIT_BUCKETS.clear()
+        app._RATE_LIMIT_BUCKETS.update(prev_rate_buckets)
+
+
+def test_read_endpoint_can_require_world_gate_when_enabled():
+    prev_require_reads = app.REQUIRE_API_KEY_FOR_READS
+    prev_header = app.API_KEY_HEADER_NAME
+    prev_gate_key = app.WORLD_GATE_KEY
+
+    try:
+        app.REQUIRE_API_KEY_FOR_READS = True
+        app.API_KEY_HEADER_NAME = "X-World-Gate"
+        app.WORLD_GATE_KEY = "read-guard-key"
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope_no_header = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/metrics",
+            "raw_path": b"/metrics",
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_no_header = Request(scope_no_header)
+        blocked = asyncio.run(app.security_guard(req_no_header, ok_next))
+        assert blocked.status_code == 401
+
+        scope_with_header = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/metrics",
+            "raw_path": b"/metrics",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"x-world-gate", b"read-guard-key"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+        req_with_header = Request(scope_with_header)
+        allowed = asyncio.run(app.security_guard(req_with_header, ok_next))
+        assert allowed.status_code == 200
+    finally:
+        app.REQUIRE_API_KEY_FOR_READS = prev_require_reads
+        app.API_KEY_HEADER_NAME = prev_header
+        app.WORLD_GATE_KEY = prev_gate_key
+
+
+def test_read_endpoint_rate_limit_when_enabled():
+    prev_rate_reads = app.RATE_LIMIT_READS_ENABLED
+    prev_rate_max = app.RATE_LIMIT_MAX_REQUESTS
+    prev_rate_window = app.RATE_LIMIT_WINDOW_SEC
+    prev_rate_buckets = {k: list(v) for k, v in app._RATE_LIMIT_BUCKETS.items()}
+
+    try:
+        app.RATE_LIMIT_READS_ENABLED = True
+        app.RATE_LIMIT_MAX_REQUESTS = 1
+        app.RATE_LIMIT_WINDOW_SEC = 60
+        app._RATE_LIMIT_BUCKETS.clear()
+
+        async def ok_next(_request):
+            return JSONResponse(status_code=200, content={"ok": True})
+
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/world",
+            "raw_path": b"/world",
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 54321),
+            "server": ("testserver", 80),
+            "scheme": "http",
+        }
+
+        req1 = Request(scope)
+        first = asyncio.run(app.security_guard(req1, ok_next))
+        assert first.status_code == 200
+
+        req2 = Request(scope)
+        second = asyncio.run(app.security_guard(req2, ok_next))
+        assert second.status_code == 429
+    finally:
+        app.RATE_LIMIT_READS_ENABLED = prev_rate_reads
+        app.RATE_LIMIT_MAX_REQUESTS = prev_rate_max
+        app.RATE_LIMIT_WINDOW_SEC = prev_rate_window
+        app._RATE_LIMIT_BUCKETS.clear()
+        app._RATE_LIMIT_BUCKETS.update(prev_rate_buckets)
+
+
+def test_autosec_defaults_enable_mutating_guards_on_fly_when_unset():
+    prev_is_fly = app.IS_FLY_RUNTIME
+    prev_autosec = app.SECURITY_AUTOCONFIG
+    prev_env = os.environ.pop("TEST_AUTOSEC_UNSET", None)
+
+    try:
+        app.IS_FLY_RUNTIME = True
+        app.SECURITY_AUTOCONFIG = True
+        value = app._env_bool_with_autosec("TEST_AUTOSEC_UNSET", False, True)
+        assert value is True
+    finally:
+        app.IS_FLY_RUNTIME = prev_is_fly
+        app.SECURITY_AUTOCONFIG = prev_autosec
+        if prev_env is not None:
+            os.environ["TEST_AUTOSEC_UNSET"] = prev_env
+
+
+def test_persist_save_rejects_absolute_request_path():
+    app.reset_in_place()
+    try:
+        app.persist_save(app.PersistSaveRequest(path="/tmp/blocked_snapshot.json", include_logs=False))
+        assert False, "Expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+        assert "relative" in str(e.detail).lower()
+
+
+def test_persist_save_rejects_parent_escape_path():
+    app.reset_in_place()
+    try:
+        app.persist_save(app.PersistSaveRequest(path="../blocked_snapshot.json", include_logs=False))
+        assert False, "Expected HTTPException"
+    except HTTPException as e:
+        assert e.status_code == 400
+        assert "escapes" in str(e.detail).lower()
+
+
+def test_persist_save_allows_relative_path_within_snapshot_base():
+    app.reset_in_place()
+    rel_path = f"ARTIFACTS/pytest_snapshot_guard_{os.getpid()}.json"
+    out_path = None
+    try:
+        res = app.persist_save(app.PersistSaveRequest(path=rel_path, include_logs=False))
+        assert res["ok"] is True
+        out_path = Path(res["path"]).resolve()
+        assert out_path.exists()
+        out_path.relative_to(app.SNAPSHOT_BASE_DIR)
+    finally:
+        if out_path is not None:
+            out_path.unlink(missing_ok=True)
+
+
 def test_happy_path_join_act_tick_explain():
     app.reset_in_place()
     prev_allow = app.ALLOW_FREE_JOIN

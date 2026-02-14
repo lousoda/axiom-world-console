@@ -25,7 +25,7 @@
 .console-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: clamp(300px, 24vw, 388px) minmax(0, 1fr);
+  grid-template-columns: clamp(320px, 24vw, 392px) minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -37,7 +37,7 @@
   display: grid;
   align-content: start;
   gap: 8px;
-  padding-right: 2px;
+  padding-right: 0;
 }
 
 .console-main {
@@ -88,14 +88,14 @@
 }
 
 .connection-card button {
-  border: 1px solid var(--ui-border);
+  border: 1px solid #2a2a36;
   border-radius: 0;
-  background: #09090d;
-  color: var(--ui-text-soft);
-  padding: 7px 10px;
-  font-size: 0.76rem;
+  background: #11111a;
+  color: #d8cfee;
+  padding: 6px 10px;
+  font-size: 0.77rem;
   line-height: 1.2;
-  min-height: 38px;
+  min-height: 36px;
   cursor: pointer;
   transition:
     transform 130ms ease,
@@ -112,12 +112,12 @@
 }
 
 .scenario-row button {
-  border: 1px solid var(--ui-border);
+  border: 1px solid #2a2a36;
   border-radius: 0;
-  background: #09090d;
-  color: var(--ui-text-soft);
+  background: #11111a;
+  color: #d8cfee;
   padding: 6px 6px;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   line-height: 1.1;
   cursor: pointer;
   min-width: 0;
@@ -127,17 +127,17 @@
 }
 
 .scenario-row button:hover {
-  background: #121218;
+  background: #171725;
 }
 
 .scenario-row .scenario-active {
-  border-color: var(--ui-border-strong);
-  color: var(--ui-accent-soft);
-  background: #15151d;
+  border-color: #4a4a64;
+  color: #f0eaff;
+  background: #1f1f30;
 }
 
 .connection-card button:hover:not(:disabled) {
-  background: #121218;
+  background: #171725;
   transform: none;
 }
 
@@ -154,18 +154,37 @@
 }
 
 .action-row button {
-  min-height: 40px;
-  font-size: 0.76rem;
+  min-height: 36px;
+  font-size: 0.74rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
+.auth-row {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.gate-key-row {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .button-primary {
-  border-color: var(--ui-border-strong) !important;
-  color: var(--ui-accent-soft) !important;
-  background: #15151d !important;
+  border-color: #515173 !important;
+  color: #f3eeff !important;
+  background: #24243b !important;
 }
 
 .button-primary:hover:not(:disabled) {
-  background: #191924 !important;
+  background: #2a2a46 !important;
 }
 
 .flow-card h2,
@@ -216,12 +235,12 @@
 
 .flow-row button {
   min-width: 92px;
-  border: 1px solid var(--ui-border);
+  border: 1px solid #2a2a36;
   border-radius: 0;
-  background: #09090d;
-  color: var(--ui-text-soft);
+  background: #11111a;
+  color: #d8cfee;
   padding: 6px 9px;
-  font-size: 0.8rem;
+  font-size: 0.81rem;
   line-height: 1.2;
   cursor: pointer;
   transition:
@@ -229,13 +248,13 @@
 }
 
 .flow-row button:hover {
-  background: #121218;
+  background: #171725;
 }
 
 .flow-active {
-  border-color: var(--ui-border-strong) !important;
-  color: var(--ui-accent-soft) !important;
-  background: #15151d !important;
+  border-color: #4a4a64 !important;
+  color: #f0eaff !important;
+  background: #1f1f30 !important;
 }
 
 .flow-safe-row {
@@ -243,10 +262,10 @@
 }
 
 .flow-safe-btn {
-  border: 1px solid var(--ui-border);
+  border: 1px solid #2a2a36;
   border-radius: 0;
-  background: #09090d;
-  color: var(--ui-text-soft);
+  background: #11111a;
+  color: #d8cfee;
   padding: 6px 9px;
   font-size: 0.76rem;
   line-height: 1.2;
@@ -255,13 +274,13 @@
 }
 
 .flow-safe-btn:hover {
-  background: #121218;
+  background: #171725;
 }
 
 .flow-safe-active {
-  border-color: var(--ui-border-strong);
-  color: var(--ui-accent-soft);
-  background: #15151d;
+  border-color: #4a4a64;
+  color: #f0eaff;
+  background: #1f1f30;
 }
 
 .flow-meta {
@@ -436,27 +455,27 @@
 .world-pulse.pulse-denial {
   animation: worldPulseFlash 640ms ease-out;
   background:
-    radial-gradient(circle at 58% 52%, rgba(255, 170, 196, 0.22), rgba(255, 170, 196, 0) 44%),
-    radial-gradient(circle at 30% 68%, rgba(215, 84, 126, 0.14), rgba(215, 84, 126, 0) 38%);
+    radial-gradient(circle at 58% 52%, rgba(255, 170, 196, 0.11), rgba(255, 170, 196, 0) 44%),
+    radial-gradient(circle at 30% 68%, rgba(215, 84, 126, 0.07), rgba(215, 84, 126, 0) 38%);
 }
 
 .world-pulse.pulse-cooldown {
   animation: worldPulseFlash 640ms ease-out;
   background:
-    radial-gradient(circle at 54% 48%, rgba(189, 178, 236, 0.2), rgba(189, 178, 236, 0) 44%),
-    radial-gradient(circle at 70% 30%, rgba(141, 132, 219, 0.13), rgba(141, 132, 219, 0) 36%);
+    radial-gradient(circle at 54% 48%, rgba(189, 178, 236, 0.1), rgba(189, 178, 236, 0) 44%),
+    radial-gradient(circle at 70% 30%, rgba(141, 132, 219, 0.06), rgba(141, 132, 219, 0) 36%);
 }
 
 .world-pulse.pulse-adaptation {
   animation: worldPulseFlash 640ms ease-out;
   background:
-    radial-gradient(circle at 55% 52%, rgba(192, 246, 227, 0.2), rgba(192, 246, 227, 0) 44%),
-    radial-gradient(circle at 35% 42%, rgba(111, 190, 159, 0.13), rgba(111, 190, 159, 0) 36%);
+    radial-gradient(circle at 55% 52%, rgba(192, 246, 227, 0.1), rgba(192, 246, 227, 0) 44%),
+    radial-gradient(circle at 35% 42%, rgba(111, 190, 159, 0.06), rgba(111, 190, 159, 0) 36%);
 }
 
 @keyframes worldPulseFlash {
   0% {
-    opacity: 0.48;
+    opacity: 0.24;
   }
   100% {
     opacity: 0;
@@ -479,8 +498,8 @@
   border: 0;
   border-radius: 0;
   background:
-    radial-gradient(780px 320px at 10% 50%, rgba(255, 255, 255, 0.045), transparent 60%),
-    radial-gradient(720px 300px at 92% 52%, rgba(255, 255, 255, 0.04), transparent 58%),
+    radial-gradient(780px 320px at 10% 50%, rgba(255, 255, 255, 0.02), transparent 60%),
+    radial-gradient(720px 300px at 92% 52%, rgba(255, 255, 255, 0.018), transparent 58%),
     #020203;
   overflow: hidden;
 }
@@ -503,17 +522,17 @@
   background:
     linear-gradient(
       90deg,
-      rgba(255, 255, 255, calc(var(--fx-side-alpha) + var(--fx-ca) * 0.72)) 0%,
+      rgba(255, 255, 255, calc(var(--fx-side-alpha) + var(--fx-ca) * 0.45)) 0%,
       rgba(255, 255, 255, 0) 12%,
       rgba(255, 255, 255, 0) 88%,
-      rgba(255, 255, 255, calc(var(--fx-side-alpha) + var(--fx-ca) * 0.72)) 100%
+      rgba(255, 255, 255, calc(var(--fx-side-alpha) + var(--fx-ca) * 0.45)) 100%
     ),
     linear-gradient(
       90deg,
-      rgba(255, 255, 255, calc(var(--fx-side-alpha) * 0.48)) 0%,
+      rgba(255, 255, 255, calc(var(--fx-side-alpha) * 0.22)) 0%,
       rgba(255, 255, 255, 0) 8%,
       rgba(255, 255, 255, 0) 92%,
-      rgba(255, 255, 255, calc(var(--fx-side-alpha) * 0.48)) 100%
+      rgba(255, 255, 255, calc(var(--fx-side-alpha) * 0.22)) 100%
     ),
     radial-gradient(
       circle at 50% 52%,
@@ -549,10 +568,10 @@
 
 .graph-canvas canvas {
   filter:
-    saturate(calc(0.67 + var(--fx-bloom) * 0.22))
-    contrast(calc(1 + var(--fx-bloom) * 0.04))
-    drop-shadow(0 0 calc(var(--fx-bloom) * 7px) rgba(245, 246, 255, 0.34))
-    drop-shadow(0 0 calc(var(--fx-bloom) * 4px) rgba(226, 229, 244, 0.2))
+    saturate(calc(0.64 + var(--fx-bloom) * 0.16))
+    contrast(calc(1 + var(--fx-bloom) * 0.025))
+    drop-shadow(0 0 calc(var(--fx-bloom) * 5px) rgba(245, 246, 255, 0.2))
+    drop-shadow(0 0 calc(var(--fx-bloom) * 2px) rgba(226, 229, 244, 0.12))
     blur(var(--fx-blur));
 }
 
@@ -816,6 +835,15 @@
   color: #bee0d0;
 }
 
+.evidence-repeat {
+  border: 1px solid var(--ui-border-strong);
+  background: #11111a;
+  color: var(--ui-accent-soft);
+  font-size: 0.64rem;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+}
+
 .explain-line {
   white-space: pre-wrap;
   word-break: break-word;
@@ -917,7 +945,31 @@
     grid-template-columns: 1fr;
   }
 
+  .auth-row {
+    grid-template-columns: 1fr;
+  }
+
   .how-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .world-pulse.pulse-denial,
+  .world-pulse.pulse-cooldown,
+  .world-pulse.pulse-adaptation {
+    animation: none;
+    opacity: 0;
+    background: none;
+  }
+
+  .inspector-drawer {
+    transition: none;
+  }
+
+  .connection-card button,
+  .flow-row button,
+  .tab-btn {
+    transition: none;
   }
 }

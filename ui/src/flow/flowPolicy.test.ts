@@ -13,8 +13,11 @@ describe("shouldStopFlowForStatus", () => {
     expect(shouldStopFlowForStatus(409)).toBe(true)
   })
 
-  it("does not stop for healthy and throttled statuses", () => {
+  it("does not stop for healthy status", () => {
     expect(shouldStopFlowForStatus(200)).toBe(false)
+  })
+
+  it("does not stop for throttled status", () => {
     expect(shouldStopFlowForStatus(429)).toBe(false)
   })
 })

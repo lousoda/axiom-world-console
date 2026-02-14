@@ -8,6 +8,14 @@ import type {
 
 const MAX_BODY_PREVIEW = 500
 
+type AuthSessionSnapshot = {
+  ok: boolean
+  cookie_auth_enabled: boolean
+  authenticated: boolean
+  api_key_header: string
+  session_cookie_name: string
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, "")
 }
@@ -94,6 +102,7 @@ async function directRequest<T>(
     method,
     headers: buildHeaders(gateKey, jsonBody),
     body: jsonBody,
+    credentials: "include",
   })
   return parseResponse<T>(response)
 }
@@ -111,6 +120,7 @@ async function proxyRequest<T>(payload: ProxyPayload): Promise<ApiCallResult<T>>
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    credentials: "include",
   })
   return parseResponse<T>(response)
 }
@@ -219,5 +229,31 @@ export async function fetchExplainRecent(
     gateKey,
     `/explain/recent?limit=${limit}`,
     "GET",
+  )
+}
+
+export async function fetchAuthSession(baseUrl: string) {
+  return requestApi<AuthSessionSnapshot>(baseUrl, "", "/auth/session", "GET")
+}
+
+export async function loginWithSessionPassword(
+  baseUrl: string,
+  password: string,
+) {
+  return requestApi<{ ok: boolean; authenticated: boolean; expires_in_sec: number }>(
+    baseUrl,
+    "",
+    "/auth/login",
+    "POST",
+    { password },
+  )
+}
+
+export async function logoutSession(baseUrl: string) {
+  return requestApi<{ ok: boolean; authenticated: boolean }>(
+    baseUrl,
+    "",
+    "/auth/logout",
+    "POST",
   )
 }

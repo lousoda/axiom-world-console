@@ -8,11 +8,14 @@ import {
 } from "react"
 import "./App.css"
 import {
+  fetchAuthSession,
   fetchExplainRecent,
   fetchLogs,
   fetchMetrics,
   fetchWorld,
+  loginWithSessionPassword,
   loadScenario,
+  logoutSession,
   type ScenarioKey,
   probeMetrics,
 } from "./api/client"
@@ -20,13 +23,17 @@ import { executeFlowCycle } from "./flow/flowController"
 import { GraphView } from "./graph/GraphView"
 import {
   EXPLAIN_PULL_EVERY,
+  TRACE_PULL_EVERY,
   flowDelayFor,
   shouldStopFlowForStatus,
 } from "./flow/flowPolicy"
 import {
+  extractBreathingEvidenceFlags,
   evidenceTagsForText,
-  extractEvidenceFlags,
+  extractProofEvidenceFlags,
   type AutonomyEvidenceCounters,
+  type EvidenceTag,
+  zeroAutonomyEvidence,
 } from "./model/evidence"
 import { buildStateFieldGraph } from "./model/stateFieldMapper"
 import type {
@@ -36,7 +43,7 @@ import type {
   WorldSnapshot,
 } from "./types"
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8001"
+const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:8001"
 const STORAGE_BASE_URL = "world_console_base_url"
 const STORAGE_GATE_KEY = "world_console_gate_key"
 const STORAGE_SCENARIO = "world_console_scenario"
@@ -48,9 +55,9 @@ const FLOW_LIMIT_AGENTS = 50
 const SCENE_REFRESH_LOGS_LIMIT = 28
 const SCENE_REFRESH_EXPLAIN_LIMIT = 60
 const SCENARIO_OPTIONS: Array<{ key: ScenarioKey; label: string }> = [
-  { key: "autonomy_proof", label: "Autonomy Proof" },
-  { key: "autonomy_breathing", label: "Autonomy Breathing" },
-  { key: "basic_auto", label: "Basic Auto" },
+  { key: "autonomy_proof", label: "Proof" },
+  { key: "autonomy_breathing", label: "Breathing" },
+  { key: "basic_auto", label: "Basic" },
 ]
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
@@ -60,11 +67,29 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+function detectDefaultBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return DEFAULT_LOCAL_BASE_URL
+  }
+  const host = window.location.hostname
+  if (host === "localhost" || host === "127.0.0.1") {
+    return DEFAULT_LOCAL_BASE_URL
+  }
+  return "/api"
+}
+
 function loadStorageValue(key: string, fallback: string): string {
   if (typeof window === "undefined") {
     return fallback
   }
   return window.localStorage.getItem(key) ?? fallback
+}
+
+function loadSessionValue(key: string, fallback: string): string {
+  if (typeof window === "undefined") {
+    return fallback
+  }
+  return window.sessionStorage.getItem(key) ?? fallback
 }
 
 function sanitizeGateKey(rawKey: string): string {
@@ -79,6 +104,13 @@ function persistStorageValue(key: string, value: string) {
     return
   }
   window.localStorage.setItem(key, value)
+}
+
+function persistSessionValue(key: string, value: string) {
+  if (typeof window === "undefined") {
+    return
+  }
+  window.sessionStorage.setItem(key, value)
 }
 
 function isObservedCode(status: number): status is ObservedCode {
@@ -96,10 +128,7 @@ function summarizeKey(value: string): string {
   if (value.length === 0) {
     return "empty"
   }
-  if (value.length <= 10) {
-    return `${value.length} chars`
-  }
-  return `${value.slice(0, 6)}...${value.slice(-4)} (${value.length})`
+  return `${value.length} chars (session)`
 }
 
 function formatUnknown(value: unknown): string {
@@ -118,12 +147,64 @@ function extractTickLabel(text: string): string | null {
   return `tick ${match[1]}`
 }
 
+type ForensicDisplayRow = {
+  text: string
+  tickLabel: string | null
+  tags: EvidenceTag[]
+  repeatCount: number
+}
+
+function normalizeForensicSignature(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\btick\s+\d+\b/g, "tick #")
+    .replace(/0x[a-f0-9]{8,}/gi, "0x#")
+    .replace(
+      /\b(balance|until|left|capacity_left|queued_at_tick|agent_id|amount|applied_actions)\s*[:=]\s*-?\d+(\.\d+)?\b/g,
+      "$1=#",
+    )
+    .replace(/\b\d+(\.\d+)?\b/g, "#")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function collapseForensicRows(lines: string[]): ForensicDisplayRow[] {
+  const rows: Array<ForensicDisplayRow & { signature: string }> = []
+  for (const text of lines) {
+    const signature = normalizeForensicSignature(text)
+    const last = rows[rows.length - 1]
+    const tags = evidenceTagsForText(text)
+    if (last && last.signature === signature) {
+      last.repeatCount += 1
+      for (const tag of tags) {
+        if (!last.tags.includes(tag)) {
+          last.tags.push(tag)
+        }
+      }
+      continue
+    }
+    rows.push({
+      signature,
+      text,
+      tickLabel: extractTickLabel(text),
+      tags: [...tags],
+      repeatCount: 1,
+    })
+  }
+  return rows.map((row) => ({
+    text: row.text,
+    tickLabel: row.tickLabel,
+    tags: row.tags,
+    repeatCount: row.repeatCount,
+  }))
+}
+
 function App() {
   const [baseUrl, setBaseUrl] = useState<string>(() =>
-    loadStorageValue(STORAGE_BASE_URL, DEFAULT_BASE_URL),
+    loadStorageValue(STORAGE_BASE_URL, detectDefaultBaseUrl()),
   )
   const [gateKey, setGateKey] = useState<string>(() =>
-    sanitizeGateKey(loadStorageValue(STORAGE_GATE_KEY, "")),
+    sanitizeGateKey(loadSessionValue(STORAGE_GATE_KEY, "")),
   )
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>(() => {
     const saved = loadStorageValue(STORAGE_SCENARIO, "autonomy_proof")
@@ -140,10 +221,15 @@ function App() {
   const [isScenarioLoading, setIsScenarioLoading] = useState<boolean>(false)
   const [isFlowRunning, setIsFlowRunning] = useState<boolean>(false)
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false)
+  const [isGateKeyVisible, setIsGateKeyVisible] = useState<boolean>(false)
+  const [isSessionAuthBusy, setIsSessionAuthBusy] = useState<boolean>(false)
+  const [sessionAuthEnabled, setSessionAuthEnabled] = useState<boolean>(false)
+  const [sessionAuthenticated, setSessionAuthenticated] = useState<boolean>(false)
+  const [sessionPassword, setSessionPassword] = useState<string>("")
 
   const [flowMode, setFlowMode] = useState<FlowMode>("PAUSE")
   const [safeMode, setSafeMode] = useState<boolean>(() => {
-    const saved = loadStorageValue(STORAGE_SAFE_MODE, "0")
+    const saved = loadStorageValue(STORAGE_SAFE_MODE, "1")
     return saved === "1"
   })
   const [flowCycles, setFlowCycles] = useState<number>(0)
@@ -173,17 +259,14 @@ function App() {
     null,
   )
   const [autonomyEvidence, setAutonomyEvidence] = useState<AutonomyEvidenceCounters>(
-    {
-      capacityDenial: 0,
-      cooldownPenalty: 0,
-      adaptationWanderOnce: 0,
-    },
+    () => zeroAutonomyEvidence(),
   )
   const [eventPulse, setEventPulse] = useState<
     "none" | "denial" | "cooldown" | "adaptation"
   >("none")
 
   const flowTokenRef = useRef(0)
+  const flowBackoffRef = useRef(0)
   const keyFileInputRef = useRef<HTMLInputElement | null>(null)
   const seenExplainEvidenceRef = useRef<Set<string>>(new Set())
   const pulseTimeoutRef = useRef<number | null>(null)
@@ -200,9 +283,11 @@ function App() {
   }, [])
 
   const canTest = baseUrl.trim().length > 0 && !isTesting
+  const hasAuthCredential =
+    gateKey.trim().length > 0 || sessionAuthenticated
   const canLoadScenario =
     baseUrl.trim().length > 0 &&
-    gateKey.trim().length > 0 &&
+    hasAuthCredential &&
     !isScenarioLoading &&
     !isFlowRunning
 
@@ -270,6 +355,121 @@ function App() {
     return `Status: ${lastStatus}`
   }, [lastStatus])
 
+  const flowCadenceLabel = useMemo(() => {
+    if (flowMode === "PAUSE") {
+      return "hold"
+    }
+    if (flowMode === "ACCELERATE") {
+      return "fast"
+    }
+    return "steady"
+  }, [flowMode])
+
+  const flowTempoLabel = useMemo(() => {
+    if (flowMode === "ACCELERATE") {
+      return `tempo ${flowDelayFor("ACCELERATE")}ms`
+    }
+    if (flowMode === "LIVE") {
+      return `tempo ${flowDelayFor("LIVE")}ms`
+    }
+    return "tempo hold"
+  }, [flowMode])
+
+  const flowRetryLabel =
+    flowBackoffMs > 0 ? `retry ${flowBackoffMs}ms` : "retry clear"
+
+  const refreshSessionAuth = useCallback(async () => {
+    if (baseUrl.trim().length === 0) {
+      setSessionAuthEnabled(false)
+      setSessionAuthenticated(false)
+      return
+    }
+    try {
+      const result = await fetchAuthSession(baseUrl)
+      if (result.status === 200 && result.data) {
+        setSessionAuthEnabled(Boolean(result.data.cookie_auth_enabled))
+        setSessionAuthenticated(Boolean(result.data.authenticated))
+        return
+      }
+      if (result.status === 404) {
+        setSessionAuthEnabled(false)
+        setSessionAuthenticated(false)
+        return
+      }
+      if (result.status === 401) {
+        setSessionAuthEnabled(true)
+        setSessionAuthenticated(false)
+        return
+      }
+      setSessionAuthEnabled(false)
+      setSessionAuthenticated(false)
+    } catch {
+      setSessionAuthEnabled(false)
+      setSessionAuthenticated(false)
+    }
+  }, [baseUrl])
+
+  useEffect(() => {
+    void refreshSessionAuth()
+  }, [refreshSessionAuth])
+
+  async function handleSessionLogin() {
+    if (isSessionAuthBusy || baseUrl.trim().length === 0) {
+      return
+    }
+    const trimmedPassword = sessionPassword.trim()
+    if (trimmedPassword.length === 0) {
+      setLastStatus(null)
+      setLastMessage("Session password is empty.")
+      return
+    }
+
+    setIsSessionAuthBusy(true)
+    try {
+      const result = await loginWithSessionPassword(baseUrl, trimmedPassword)
+      const message =
+        result.status === 200
+          ? "Session authenticated."
+          : bodyPreview(result.rawText)
+      recordStatus(result.status, message)
+      if (result.status === 200) {
+        setSessionPassword("")
+      }
+      await refreshSessionAuth()
+    } catch (error) {
+      setLastStatus(null)
+      setLastMessage(
+        error instanceof Error ? error.message : "Session login failed.",
+      )
+    } finally {
+      setIsSessionAuthBusy(false)
+    }
+  }
+
+  async function handleSessionLogout() {
+    if (isSessionAuthBusy || baseUrl.trim().length === 0) {
+      return
+    }
+
+    setIsSessionAuthBusy(true)
+    try {
+      const result = await logoutSession(baseUrl)
+      const message =
+        result.status === 200
+          ? "Session signed out."
+          : bodyPreview(result.rawText)
+      recordStatus(result.status, message)
+      await refreshSessionAuth()
+    } catch (error) {
+      setLastStatus(null)
+      setLastMessage(
+        error instanceof Error ? error.message : "Session logout failed.",
+      )
+    } finally {
+      setIsSessionAuthBusy(false)
+    }
+  }
+
   async function handleProbeClick() {
     if (!canTest) {
       return
@@ -317,17 +517,15 @@ function App() {
 
       if (result.status === 200) {
         seenExplainEvidenceRef.current.clear()
-        setAutonomyEvidence({
-          capacityDenial: 0,
-          cooldownPenalty: 0,
-          adaptationWanderOnce: 0,
-        })
+        setAutonomyEvidence(zeroAutonomyEvidence())
         setExplainSnapshot(null)
         setActiveTab("WORLD")
         const refresh = await refreshSnapshotsAfterSceneLoad()
 
         if (refresh.stopStatus === 401) {
-          setFlowNote("Scene loaded. 401 during snapshot refresh: update X-World-Gate.")
+          setFlowNote(
+            "Scene loaded. 401 during snapshot refresh: update auth (Gate key or session login).",
+          )
           setFlowMode("PAUSE")
         } else if (refresh.stopStatus === 402 || refresh.stopStatus === 409) {
           setFlowNote(
@@ -340,7 +538,7 @@ function App() {
           setFlowNote(`Scene "${scenarioKey}" loaded. Observation refreshed.`)
         }
       } else if (result.status === 401) {
-        setFlowNote("401: X-World-Gate mismatch. Load key file and retry.")
+        setFlowNote("401: credentials mismatch. Load key or sign in and retry.")
       }
       if (shouldStopFlowForStatus(result.status)) {
         setFlowMode("PAUSE")
@@ -369,7 +567,7 @@ function App() {
       const raw = await file.text()
       const nextValue = sanitizeGateKey(raw)
       setGateKey(nextValue)
-      persistStorageValue(STORAGE_GATE_KEY, nextValue)
+      persistSessionValue(STORAGE_GATE_KEY, nextValue)
       setLastStatus(nextValue.length > 0 ? 200 : null)
       setLastMessage(
         nextValue.length > 0
@@ -391,12 +589,13 @@ function App() {
   useEffect(() => {
     if (flowMode === "PAUSE") {
       setIsFlowRunning(false)
+      flowBackoffRef.current = 0
       setFlowBackoffMs(0)
       return
     }
-    if (baseUrl.trim().length === 0 || gateKey.trim().length === 0) {
+    if (baseUrl.trim().length === 0 || !hasAuthCredential) {
       setFlowMode("PAUSE")
-      setFlowNote("FLOW paused: Base URL or X-World-Gate is missing.")
+      setFlowNote("FLOW paused: Base URL or auth credential is missing.")
       return
     }
 
@@ -404,7 +603,7 @@ function App() {
     const token = flowTokenRef.current
     let cancelled = false
     let timeoutId: number | null = null
-    let localBackoffMs = flowBackoffMs
+    let localBackoffMs = flowBackoffRef.current
     let cycleIndex = 0
 
     const runCycle = async () => {
@@ -421,6 +620,7 @@ function App() {
           gateKey,
           cycleIndex,
           backoffMs: localBackoffMs,
+          logsEvery: TRACE_PULL_EVERY,
           explainEvery: EXPLAIN_PULL_EVERY,
           logsLimit: TRACE_LIMIT,
           explainLimit: EXPLAIN_LIMIT,
@@ -428,6 +628,7 @@ function App() {
         })
 
         localBackoffMs = cycle.backoffMs
+        flowBackoffRef.current = cycle.backoffMs
         setFlowBackoffMs(cycle.backoffMs)
 
         for (const status of cycle.statusTrail) {
@@ -461,10 +662,18 @@ function App() {
         }
 
         setFlowCycles((value) => value + 1)
+        const normalizedCycleMessage = cycle.message.startsWith("Flow cycle")
+          ? flowMode === "ACCELERATE"
+            ? `Fast pass ${cycleIndex} complete.`
+            : flowMode === "LIVE"
+              ? `Live pass ${cycleIndex} complete.`
+              : `Cycle ${cycleIndex} complete.`
+          : cycle.message
+
         const baseFlowNote =
           cycle.backoffMs > 0
-            ? `${cycle.message} Backoff ${cycle.backoffMs}ms.`
-            : cycle.message
+            ? `${normalizedCycleMessage} Backoff ${cycle.backoffMs}ms.`
+            : normalizedCycleMessage
         const activeAgents = cycle.world?.agents?.length ?? 0
         setFlowNote(
           activeAgents === 0
@@ -472,15 +681,15 @@ function App() {
             : baseFlowNote,
         )
 
-      if (cycle.stopFlow) {
-        if (cycle.stopStatus === 401) {
-          setFlowNote(
-            "FLOW paused on 401. Update X-World-Gate (Load Key File) and retry.",
-          )
+        if (cycle.stopFlow) {
+          if (cycle.stopStatus === 401) {
+            setFlowNote(
+              "FLOW paused on 401. Update auth (Gate key or session login) and retry.",
+            )
+          }
+          setFlowMode("PAUSE")
+          return
         }
-        setFlowMode("PAUSE")
-        return
-      }
       } catch (error) {
         setFlowMode("PAUSE")
         setFlowNote(
@@ -508,7 +717,7 @@ function App() {
         window.clearTimeout(timeoutId)
       }
     }
-  }, [baseUrl, flowMode, gateKey, flowBackoffMs, recordStatus])
+  }, [baseUrl, flowMode, gateKey, hasAuthCredential, recordStatus])
 
   useEffect(() => {
     const lines = explainSnapshot?.lines
@@ -518,20 +727,31 @@ function App() {
     let deltaCapacityDenial = 0
     let deltaCooldownPenalty = 0
     let deltaAdaptationWanderOnce = 0
+    let deltaIdleCycles = 0
+    let deltaActiveCycles = 0
+    let deltaCapacityHeadroom = 0
     for (const line of lines) {
       if (seenExplainEvidenceRef.current.has(line)) {
         continue
       }
       seenExplainEvidenceRef.current.add(line)
-      const flags = extractEvidenceFlags(line)
-      deltaCapacityDenial += flags.capacityDenial
-      deltaCooldownPenalty += flags.cooldownPenalty
-      deltaAdaptationWanderOnce += flags.adaptationWanderOnce
+      const proofFlags = extractProofEvidenceFlags(line)
+      deltaCapacityDenial += proofFlags.capacityDenial
+      deltaCooldownPenalty += proofFlags.cooldownPenalty
+      deltaAdaptationWanderOnce += proofFlags.adaptationWanderOnce
+
+      const breathingFlags = extractBreathingEvidenceFlags(line)
+      deltaIdleCycles += breathingFlags.idleCycles
+      deltaActiveCycles += breathingFlags.activeCycles
+      deltaCapacityHeadroom += breathingFlags.capacityHeadroom
     }
     if (
       deltaCapacityDenial === 0 &&
       deltaCooldownPenalty === 0 &&
-      deltaAdaptationWanderOnce === 0
+      deltaAdaptationWanderOnce === 0 &&
+      deltaIdleCycles === 0 &&
+      deltaActiveCycles === 0 &&
+      deltaCapacityHeadroom === 0
     ) {
       return
     }
@@ -540,6 +760,9 @@ function App() {
       cooldownPenalty: prev.cooldownPenalty + deltaCooldownPenalty,
       adaptationWanderOnce:
         prev.adaptationWanderOnce + deltaAdaptationWanderOnce,
+      idleCycles: prev.idleCycles + deltaIdleCycles,
+      activeCycles: prev.activeCycles + deltaActiveCycles,
+      capacityHeadroom: prev.capacityHeadroom + deltaCapacityHeadroom,
     }))
 
     let nextPulse: "none" | "denial" | "cooldown" | "adaptation" = "none"
@@ -549,6 +772,10 @@ function App() {
       nextPulse = "cooldown"
     } else if (deltaAdaptationWanderOnce > 0) {
       nextPulse = "adaptation"
+    } else if (deltaCapacityHeadroom > 0) {
+      nextPulse = "adaptation"
+    } else if (deltaActiveCycles > 0) {
+      nextPulse = "cooldown"
     }
 
     if (nextPulse !== "none") {
@@ -610,12 +837,12 @@ function App() {
   }, [flowMode])
   const graphFx = useMemo(
     () => ({
-      ca: 0.058 + pressureRatio * 0.1 + (isFlowRunning ? 0.018 : 0.006),
-      grain: 0.09 + pressureRatio * 0.075 + flowIntensity * 0.034,
-      vignette: 0.57 + (1 - flowIntensity) * 0.08,
+      ca: 0.022 + pressureRatio * 0.05 + (isFlowRunning ? 0.008 : 0.003),
+      grain: 0.075 + pressureRatio * 0.05 + flowIntensity * 0.02,
+      vignette: 0.6 + (1 - flowIntensity) * 0.06,
       blur: 0,
-      bloom: 0.24 + pressureRatio * 0.27 + flowIntensity * 0.16,
-      sideAlpha: 0.065 + pressureRatio * 0.15 + flowIntensity * 0.05,
+      bloom: 0.14 + pressureRatio * 0.12 + flowIntensity * 0.08,
+      sideAlpha: 0.016 + pressureRatio * 0.04 + flowIntensity * 0.015,
       sideShift: 0,
     }),
     [flowIntensity, isFlowRunning, pressureRatio],
@@ -649,6 +876,19 @@ function App() {
     }
     return preview
   }, [explainSnapshot])
+
+  const traceRows = useMemo(() => {
+    const lines = traceSnapshot
+      .slice()
+      .reverse()
+      .map((entry) => (typeof entry === "string" ? entry : formatUnknown(entry)))
+    return collapseForensicRows(lines)
+  }, [traceSnapshot])
+
+  const explainRows = useMemo(() => {
+    const lines = explainSnapshot?.lines?.slice().reverse() ?? []
+    return collapseForensicRows(lines)
+  }, [explainSnapshot])
   const monadGateSignals = useMemo(
     () => ({
       unauthorized: statusHits[401],
@@ -658,6 +898,85 @@ function App() {
     }),
     [statusHits],
   )
+  const evidenceRows = useMemo(
+    () =>
+      scenarioKey === "autonomy_breathing"
+        ? [
+            { label: "Idle cycles", value: autonomyEvidence.idleCycles },
+            { label: "Active cycles", value: autonomyEvidence.activeCycles },
+            {
+              label: "Headroom events",
+              value: autonomyEvidence.capacityHeadroom,
+            },
+          ]
+        : [
+            {
+              label: "Capacity denial",
+              value: autonomyEvidence.capacityDenial,
+            },
+            {
+              label: "Cooldown penalty",
+              value: autonomyEvidence.cooldownPenalty,
+            },
+            {
+              label: "Adaptation (wander once)",
+              value: autonomyEvidence.adaptationWanderOnce,
+            },
+          ],
+    [autonomyEvidence, scenarioKey],
+  )
+  const evidenceNote =
+    scenarioKey === "autonomy_breathing"
+      ? "Derived from EXPLAIN rhythm: idle vs active cycles and capacity headroom."
+      : "Derived from EXPLAIN forensic trace."
+
+  const pressureSignalA =
+    scenarioKey === "autonomy_breathing"
+      ? { label: "Idle cycles", value: autonomyEvidence.idleCycles }
+      : { label: "Denials", value: autonomyEvidence.capacityDenial }
+
+  const pressureSignalB =
+    scenarioKey === "autonomy_breathing"
+      ? { label: "Headroom", value: autonomyEvidence.capacityHeadroom }
+      : { label: "Cooldowns", value: autonomyEvidence.cooldownPenalty }
+
+  const adaptationSignalA =
+    scenarioKey === "autonomy_breathing"
+      ? { label: "Active cycles", value: autonomyEvidence.activeCycles }
+      : { label: "Adaptation", value: autonomyEvidence.adaptationWanderOnce }
+
+  const adaptationSignalB =
+    scenarioKey === "autonomy_breathing"
+      ? { label: "Headroom", value: autonomyEvidence.capacityHeadroom }
+      : { label: "Cooldown", value: autonomyEvidence.cooldownPenalty }
+
+  function handleFlowModeRequest(nextMode: FlowMode) {
+    if (nextMode === "PAUSE") {
+      setFlowMode("PAUSE")
+      return
+    }
+    if (baseUrl.trim().length === 0) {
+      setFlowMode("PAUSE")
+      setFlowNote("FLOW paused: API Endpoint is missing.")
+      return
+    }
+    if (!hasAuthCredential) {
+      setFlowMode("PAUSE")
+      setFlowNote("FLOW paused: provide X-World-Gate or sign in session first.")
+      return
+    }
+    if (agentsObserved === 0) {
+      setFlowMode("PAUSE")
+      setFlowNote("FLOW paused: no active agents. Select scenario and Load Scene first.")
+      return
+    }
+    if (!safeMode) {
+      setSafeMode(true)
+      persistStorageValue(STORAGE_SAFE_MODE, "1")
+      setFlowNote("Safe Mode auto-enabled for stability.")
+    }
+    setFlowMode(nextMode)
+  }
 
   return (
     <main className="console-root">
@@ -680,25 +999,73 @@ function App() {
             <label htmlFor="world-gate-key">X-World-Gate</label>
             <input
               id="world-gate-key"
+              type={isGateKeyVisible ? "text" : "password"}
               value={gateKey}
               onChange={(event) => {
                 const nextValue = sanitizeGateKey(event.target.value)
                 setGateKey(nextValue)
-                persistStorageValue(STORAGE_GATE_KEY, nextValue)
+                persistSessionValue(STORAGE_GATE_KEY, nextValue)
               }}
               placeholder="Paste current WORLD_GATE_KEY"
               autoComplete="off"
             />
+            <div className="gate-key-row">
+              <button
+                type="button"
+                onClick={() => setIsGateKeyVisible((current) => !current)}
+              >
+                {isGateKeyVisible ? "Hide Key" : "Show Key"}
+              </button>
+            </div>
             <p className="field-meta">
               Key length (normalized): {gateKey.length}
             </p>
             <p className="field-meta">Key fingerprint: {keySummary}</p>
+            <p className="field-meta">
+              Session auth:{" "}
+              {sessionAuthEnabled
+                ? sessionAuthenticated
+                  ? "active"
+                  : "available"
+                : "disabled"}
+            </p>
+
+            {sessionAuthEnabled ? (
+              <>
+                <label htmlFor="session-password">Session Password</label>
+                <input
+                  id="session-password"
+                  type="password"
+                  value={sessionPassword}
+                  onChange={(event) => setSessionPassword(event.target.value)}
+                  placeholder="Sign in once for this browser session"
+                  autoComplete="current-password"
+                />
+                <div className="auth-row">
+                  <button
+                    onClick={handleSessionLogin}
+                    disabled={
+                      isSessionAuthBusy || baseUrl.trim().length === 0 || sessionPassword.trim().length === 0
+                    }
+                  >
+                    {isSessionAuthBusy ? "Signing In..." : "Sign In"}
+                  </button>
+                  <button
+                    onClick={handleSessionLogout}
+                    disabled={isSessionAuthBusy || !sessionAuthenticated}
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </>
+            ) : null}
 
             <label>Scenario</label>
             <div className="scenario-row">
               {SCENARIO_OPTIONS.map((option) => (
                 <button
                   key={option.key}
+                  title={option.key}
                   className={scenarioKey === option.key ? "scenario-active" : ""}
                   onClick={() => {
                     setScenarioKey(option.key)
@@ -721,9 +1088,9 @@ function App() {
 
             <div className="action-row">
               <button onClick={handleProbeClick} disabled={!canTest}>
-                {isTesting ? "Validating..." : "Validate Link"}
+                {isTesting ? "Validating..." : "Validate"}
               </button>
-              <button onClick={handleImportKeyClick}>Load Key File</button>
+              <button onClick={handleImportKeyClick}>Load Key</button>
               <button
                 className="button-primary"
                 onClick={handleLoadScenario}
@@ -739,19 +1106,19 @@ function App() {
             <div className="flow-row">
               <button
                 className={flowMode === "LIVE" ? "flow-active" : ""}
-                onClick={() => setFlowMode("LIVE")}
+                onClick={() => handleFlowModeRequest("LIVE")}
               >
                 LIVE
               </button>
               <button
                 className={flowMode === "PAUSE" ? "flow-active" : ""}
-                onClick={() => setFlowMode("PAUSE")}
+                onClick={() => handleFlowModeRequest("PAUSE")}
               >
                 PAUSE
               </button>
               <button
                 className={flowMode === "ACCELERATE" ? "flow-active" : ""}
-                onClick={() => setFlowMode("ACCELERATE")}
+                onClick={() => handleFlowModeRequest("ACCELERATE")}
               >
                 ACCELERATE
               </button>
@@ -770,10 +1137,11 @@ function App() {
               </button>
             </div>
             <p className="flow-meta">
-              Mode {flowMode} | Loop {isFlowRunning ? "on" : "off"} | Cycles{" "}
-              {flowCycles}
+              Cadence {flowCadenceLabel} · {flowTempoLabel}
             </p>
-            <p className="flow-meta">Retry delay {flowBackoffMs}ms</p>
+            <p className="flow-meta">
+              Cycles {flowCycles} · {flowRetryLabel}
+            </p>
             <p className="flow-note">{flowNote}</p>
           </section>
 
@@ -798,17 +1166,13 @@ function App() {
           <section className="evidence-card">
             <h2>Autonomy Evidence</h2>
             <div className="evidence-strip">
-              <span className="evidence-pill">
-                Capacity denial: {autonomyEvidence.capacityDenial}
-              </span>
-              <span className="evidence-pill">
-                Cooldown penalty: {autonomyEvidence.cooldownPenalty}
-              </span>
-              <span className="evidence-pill">
-                Adaptation (wander once): {autonomyEvidence.adaptationWanderOnce}
-              </span>
+              {evidenceRows.map((row) => (
+                <span key={row.label} className="evidence-pill">
+                  {row.label}: {row.value}
+                </span>
+              ))}
             </div>
-            <p className="evidence-note">Derived from EXPLAIN forensic trace.</p>
+            <p className="evidence-note">{evidenceNote}</p>
           </section>
 
           <section className="telemetry-card">
@@ -956,26 +1320,20 @@ function App() {
                     </ul>
                   </section>
                 ) : null}
-                {traceSnapshot.length === 0 ? (
+                {traceRows.length === 0 ? (
                   <p className="empty-panel">No trace lines yet.</p>
                 ) : (
                   <ul className="trace-list">
-                    {traceSnapshot
-                      .slice()
-                      .reverse()
-                      .map((entry, index) => {
-                        const entryText = typeof entry === "string" ? entry : formatUnknown(entry)
-                        const tags = evidenceTagsForText(entryText)
-                        const tickLabel = extractTickLabel(entryText)
+                    {traceRows.map((row, index) => {
                         return (
                           <li key={index} className="trace-item forensic-item">
                             <div className="forensic-meta">
                               <span className="forensic-tick">
-                                {tickLabel ?? "event"}
+                                {row.tickLabel ?? "event"}
                               </span>
-                              {tags.length > 0 ? (
+                              {row.tags.length > 0 || row.repeatCount > 1 ? (
                                 <div className="evidence-tags">
-                                  {tags.map((tag) => (
+                                  {row.tags.map((tag) => (
                                     <span
                                       key={tag}
                                       className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
@@ -983,10 +1341,13 @@ function App() {
                                       {tag}
                                     </span>
                                   ))}
+                                  {row.repeatCount > 1 ? (
+                                    <span className="evidence-repeat">x{row.repeatCount}</span>
+                                  ) : null}
                                 </div>
                               ) : null}
                             </div>
-                            <pre>{entryText}</pre>
+                            <pre>{row.text}</pre>
                           </li>
                         )
                       })}
@@ -1023,23 +1384,18 @@ function App() {
                     </ul>
                   </section>
                 ) : null}
-                {!explainSnapshot || explainSnapshot.lines.length === 0 ? (
+                {explainRows.length === 0 ? (
                   <p className="empty-panel">No explain lines yet.</p>
                 ) : (
                   <ul className="explain-list">
-                    {explainSnapshot.lines
-                      .slice()
-                      .reverse()
-                      .map((line, index) => {
-                        const tags = evidenceTagsForText(line)
-                        const tickLabel = extractTickLabel(line)
+                    {explainRows.map((row, index) => {
                         return (
                           <li key={index} className="forensic-item">
                             <div className="forensic-meta">
                               <span className="forensic-tick">
-                                {tickLabel ?? "event"}
+                                {row.tickLabel ?? "event"}
                               </span>
-                              {tags.map((tag) => (
+                              {row.tags.map((tag) => (
                                 <span
                                   key={tag}
                                   className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
@@ -1047,8 +1403,11 @@ function App() {
                                   {tag}
                                 </span>
                               ))}
+                              {row.repeatCount > 1 ? (
+                                <span className="evidence-repeat">x{row.repeatCount}</span>
+                              ) : null}
                             </div>
-                            <div className="explain-line">{line}</div>
+                            <div className="explain-line">{row.text}</div>
                           </li>
                         )
                       })}
@@ -1076,7 +1435,7 @@ function App() {
                       No partial context. No hidden signals.
                     </p>
                     <p className="how-metric">
-                      Proof Signal:{" "}
+                      Loop Signal:{" "}
                       Cycle <strong>{flowCycles}</strong> · Capacity Left{" "}
                       <strong>{capacityLeftObserved ?? "n/a"}</strong>
                       {" · "}Agent State <strong>{agentsObserved}</strong>
@@ -1095,7 +1454,7 @@ function App() {
                       Deterministic mapping: state to action.
                     </p>
                     <p className="how-metric">
-                      Proof Signal:{" "}
+                      Policy Signal:{" "}
                       Goal Checks <strong>{agentsObserved}</strong> · Position Signals{" "}
                       <strong>{locationsObserved}</strong> · Trace Lines{" "}
                       <strong>{deferredTraceLines}</strong>
@@ -1104,38 +1463,70 @@ function App() {
 
                   <article className="how-card">
                     <h4>Constraint Pressure</h4>
-                    <p>
-                      Capacity limits and cooldowns introduce pressure.
-                    </p>
-                    <p>
-                      Denied actions trigger controlled divergence.
-                    </p>
-                    <p>
-                      Every deviation is logged and explainable.
-                    </p>
+                    {scenarioKey === "autonomy_breathing" ? (
+                      <>
+                        <p>
+                          Low pressure keeps workshop headroom available.
+                        </p>
+                        <p>
+                          Actions settle into a stable cadence.
+                        </p>
+                        <p>
+                          Even stable phases stay fully logged.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p>
+                          Capacity limits and cooldowns introduce pressure.
+                        </p>
+                        <p>
+                          Denied actions trigger controlled divergence.
+                        </p>
+                        <p>
+                          Every deviation is logged and explainable.
+                        </p>
+                      </>
+                    )}
                     <p className="how-metric">
-                      Proof Signal:{" "}
-                      Denials <strong>{autonomyEvidence.capacityDenial}</strong> ·
-                      Cooldowns <strong>{autonomyEvidence.cooldownPenalty}</strong> ·
+                      Pressure Signal:{" "}
+                      {pressureSignalA.label} <strong>{pressureSignalA.value}</strong> ·{" "}
+                      {pressureSignalB.label} <strong>{pressureSignalB.value}</strong> ·
                       Capacity Left <strong>{capacityLeftObserved ?? "n/a"}</strong>
                     </p>
                   </article>
 
                   <article className="how-card">
                     <h4>Adaptive Autonomy</h4>
-                    <p>
-                      Repeated denial triggers temporary goal override.
-                    </p>
-                    <p>
-                      Adaptive window expires and goal is restored.
-                    </p>
-                    <p>
-                      Behavior emerges from rule execution, not scripts.
-                    </p>
+                    {scenarioKey === "autonomy_breathing" ? (
+                      <>
+                        <p>
+                          Agents keep deterministic flow under light pressure.
+                        </p>
+                        <p>
+                          Idle and active phases alternate without manual control.
+                        </p>
+                        <p>
+                          Behavior emerges from rules, not scripts.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p>
+                          Repeated denial triggers temporary goal override.
+                        </p>
+                        <p>
+                          Adaptive window expires and goal is restored.
+                        </p>
+                        <p>
+                          Behavior emerges from rule execution, not scripts.
+                        </p>
+                      </>
+                    )}
                     <p className="how-metric">
-                      Proof Signal:{" "}
-                      Adaptation <strong>{autonomyEvidence.adaptationWanderOnce}</strong> ·
-                      Cooldown <strong>{autonomyEvidence.cooldownPenalty}</strong> ·
+                      Adaptation Signal:{" "}
+                      {adaptationSignalA.label} <strong>{adaptationSignalA.value}</strong> ·{" "}
+                      {adaptationSignalB.label} <strong>{adaptationSignalB.value}</strong> ·
                       Explain Lines <strong>{explainLines}</strong>
                     </p>
                   </article>
@@ -1152,7 +1543,7 @@ function App() {
                       Reused transactions are rejected (409).
                     </p>
                     <p className="how-metric">
-                      Proof Signal:{" "}
+                      Gate Signal:{" "}
                       401 <strong>{monadGateSignals.unauthorized}</strong> · 402{" "}
                       <strong>{monadGateSignals.paymentRequired}</strong> · 200{" "}
                       <strong>{monadGateSignals.accepted}</strong> · 409{" "}
@@ -1172,7 +1563,7 @@ function App() {
                       The system is auditable, not probabilistic.
                     </p>
                     <p className="how-metric">
-                      Proof Signal: Artifact output MATCH/MISMATCH via{" "}
+                      Replay Signal: Artifact output MATCH/MISMATCH via{" "}
                       <code>scripts/determinism_proof.sh</code>
                     </p>
                   </article>

@@ -1,14 +1,15 @@
 import type { FlowMode, StopStatusCode } from "../types"
 
 export const FLOW_DELAY_MS: Record<FlowMode, number> = {
-  LIVE: 900,
+  LIVE: 1800,
   PAUSE: 0,
-  ACCELERATE: 300,
+  ACCELERATE: 900,
 }
 
 export const MAX_BACKOFF_MS = 5000
 export const BACKOFF_STEP_MS = 700
-export const EXPLAIN_PULL_EVERY = 1
+export const TRACE_PULL_EVERY = 3
+export const EXPLAIN_PULL_EVERY = 6
 
 const STOP_STATUSES: StopStatusCode[] = [401, 402, 409]
 

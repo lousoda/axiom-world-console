@@ -34,6 +34,15 @@ type GraphViewProps = {
   safeMode?: boolean
 }
 
+const DEFAULT_ACTIVITY: GraphActivity = {
+  agents: 0,
+  queued: 0,
+  pressure: 0,
+  flowMode: "PAUSE",
+  running: false,
+  cycle: 0,
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -151,6 +160,9 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
   const containerRef = useRef<HTMLDivElement | null>(null)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const networkRef = useRef<Network | null>(null)
+  const activityRef = useRef<GraphActivity>(DEFAULT_ACTIVITY)
+  const pageVisibleRef = useRef(true)
+  const reducedMotionRef = useRef(false)
   const fittedRef = useRef(false)
   const userAdjustedViewRef = useRef(false)
   const motionNodesRef = useRef<MotionNode[]>([])
@@ -175,6 +187,43 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
       ["--fx-blur" as string]: `${values.blur.toFixed(2)}px`,
     }
   }, [fx])
+
+  useEffect(() => {
+    activityRef.current = activity ?? DEFAULT_ACTIVITY
+  }, [activity])
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return
+    }
+
+    pageVisibleRef.current = document.visibilityState === "visible"
+    const onVisibilityChange = () => {
+      pageVisibleRef.current = document.visibilityState === "visible"
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return
+    }
+
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)")
+    reducedMotionRef.current = media.matches
+
+    const onMotionChange = (event: MediaQueryListEvent) => {
+      reducedMotionRef.current = event.matches
+    }
+
+    media.addEventListener("change", onMotionChange)
+    return () => {
+      media.removeEventListener("change", onMotionChange)
+    }
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -224,7 +273,8 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
       }
       const width = Math.max(1, Math.floor(host.clientWidth))
       const height = Math.max(1, Math.floor(host.clientHeight))
-      const dpr = window.devicePixelRatio || 1
+      const rawDpr = window.devicePixelRatio || 1
+      const dpr = Math.min(rawDpr, reducedMotionRef.current ? 1.5 : 2)
 
       if (overlayW !== width || overlayH !== height || overlayDpr !== dpr) {
         overlayW = width
@@ -251,14 +301,7 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
       const { ctx, width, height } = sized
       ctx.clearRect(0, 0, width, height)
 
-      const activityState = activity ?? {
-        agents: 0,
-        queued: 0,
-        pressure: 0,
-        flowMode: "PAUSE" as const,
-        running: false,
-        cycle: 0,
-      }
+      const activityState = activityRef.current
 
       const modeBoost =
         activityState.flowMode === "ACCELERATE"
@@ -426,10 +469,18 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
 
     const tick = (ts: number) => {
       const network = networkRef.current
-      if (network) {
-        const nodeUpdateMs = safeMode ? 92 : 58
-        const redrawMs = safeMode ? 56 : 34
-        const overlayMs = safeMode ? 52 : 16
+      if (network && pageVisibleRef.current) {
+        const reduced = reducedMotionRef.current
+        const heavyGraph = graph.nodes.length > 3200 || graph.edges.length > 2800
+        const extremeGraph = graph.nodes.length > 4200 || graph.edges.length > 3600
+        const pressureFactor = heavyGraph ? (extremeGraph ? 1.45 : 1.25) : 1
+        const idleFactor = activityRef.current.running ? 1 : 1.4
+        const nodeUpdateMs =
+          (safeMode ? 102 : reduced ? 88 : 64) * idleFactor * pressureFactor
+        const redrawMs =
+          (safeMode ? 60 : reduced ? 48 : 36) * idleFactor * pressureFactor
+        const overlayMs =
+          (safeMode ? 56 : reduced ? 36 : 18) * idleFactor * pressureFactor
         if (ts - lastUpdate >= nodeUpdateMs) {
           const nodesData = (
             (network as unknown as {
@@ -456,6 +507,12 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
           drawActivityOverlay(ts, network)
           lastOverlay = ts
         }
+      } else if (network && ts - lastOverlay >= 250) {
+        const sized = ensureOverlaySize()
+        if (sized) {
+          sized.ctx.clearRect(0, 0, sized.width, sized.height)
+        }
+        lastOverlay = ts
       }
       rafId = window.requestAnimationFrame(tick)
     }
@@ -465,7 +522,7 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
     return () => {
       window.cancelAnimationFrame(rafId)
     }
-  }, [activity, safeMode])
+  }, [graph.edges.length, graph.nodes.length, safeMode])
 
   useEffect(() => {
     if (!networkRef.current) {
@@ -478,8 +535,31 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
       edges: toVisEdges(graph.edges),
     })
 
+    const heavyGraph = graph.nodes.length > 3400 || graph.edges.length > 3000
+    network.setOptions({
+      edges: {
+        smooth: heavyGraph
+          ? false
+          : {
+              enabled: true,
+              type: "continuous",
+              roundness: 0.1,
+            },
+      },
+    })
+
     const sampleNodes = graph.nodes.filter((node) => node.kind === "sample")
-    const motionStride = safeMode ? 8 : 5
+    const extremeGraph = graph.nodes.length > 4200 || graph.edges.length > 3600
+    const motionStride = extremeGraph
+      ? 14
+      : heavyGraph
+        ? safeMode
+          ? 11
+          : 9
+        : safeMode
+          ? 8
+          : 5
+    const maxMotionNodes = extremeGraph ? 180 : heavyGraph ? 280 : 360
     motionNodesRef.current = sampleNodes
       .filter((_, index) => index % motionStride === 0)
       .map((node) => {
@@ -496,6 +576,7 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
           speed,
         }
       })
+      .slice(0, maxMotionNodes)
 
     if (!fittedRef.current) {
       network.fit({
