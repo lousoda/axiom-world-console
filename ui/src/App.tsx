@@ -49,7 +49,7 @@ const SCENE_REFRESH_LOGS_LIMIT = 28
 const SCENE_REFRESH_EXPLAIN_LIMIT = 60
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
-type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN"
+type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN" | "HOW_IT_WORKS"
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -114,7 +114,11 @@ function App() {
   )
   const [scenarioKey, setScenarioKey] = useState<ScenarioKey>(() => {
     const saved = loadStorageValue(STORAGE_SCENARIO, "autonomy_proof")
-    return saved === "basic_auto" || saved === "autonomy_proof"
+    return (
+      saved === "basic_auto" ||
+      saved === "autonomy_proof" ||
+      saved === "autonomy_breathing"
+    )
       ? saved
       : "autonomy_proof"
   })
@@ -575,6 +579,15 @@ function App() {
     }
     return preview
   }, [explainSnapshot])
+  const monadGateSignals = useMemo(
+    () => ({
+      unauthorized: statusHits[401],
+      paymentRequired: statusHits[402],
+      replayBlocked: statusHits[409],
+      accepted: statusHits[200],
+    }),
+    [statusHits],
+  )
 
   return (
     <main className="console-root">
@@ -627,6 +640,16 @@ function App() {
                 type="button"
               >
                 autonomy_proof
+              </button>
+              <button
+                className={scenarioKey === "autonomy_breathing" ? "scenario-active" : ""}
+                onClick={() => {
+                  setScenarioKey("autonomy_breathing")
+                  persistStorageValue(STORAGE_SCENARIO, "autonomy_breathing")
+                }}
+                type="button"
+              >
+                autonomy_breathing
               </button>
               <button
                 className={scenarioKey === "basic_auto" ? "scenario-active" : ""}
@@ -769,6 +792,14 @@ function App() {
                   onClick={() => setActiveTab("EXPLAIN")}
                 >
                   EXPLAIN
+                </button>
+                <button
+                  className={`tab-btn ${
+                    activeTab === "HOW_IT_WORKS" ? "tab-active" : ""
+                  }`}
+                  onClick={() => setActiveTab("HOW_IT_WORKS")}
+                >
+                  HOW IT WORKS
                 </button>
               </div>
               {activeTab === "WORLD" ? (
@@ -947,6 +978,129 @@ function App() {
                       })}
                   </ul>
                 )}
+              </div>
+            ) : null}
+
+            {activeTab === "HOW_IT_WORKS" ? (
+              <div className="tab-panel">
+                <h3>HOW IT WORKS</h3>
+                <p className="how-sequence">
+                  State -&gt; Policy -&gt; Constraint -&gt; Adaptation -&gt; Proof
+                </p>
+                <div className="how-grid">
+                  <article className="how-card">
+                    <h4>Observation Loop</h4>
+                    <p>
+                      Each cycle reads the full world snapshot.
+                    </p>
+                    <p>
+                      State, position, balance, capacity, cooldown.
+                    </p>
+                    <p>
+                      No partial context. No hidden signals.
+                    </p>
+                    <p className="how-metric">
+                      Proof Signal:{" "}
+                      Cycle <strong>{flowCycles}</strong> · Capacity Left{" "}
+                      <strong>{capacityLeftObserved ?? "n/a"}</strong>
+                      {" · "}Agent State <strong>{agentsObserved}</strong>
+                    </p>
+                  </article>
+
+                  <article className="how-card">
+                    <h4>Policy Engine</h4>
+                    <p>
+                      Goal and state are evaluated per agent.
+                    </p>
+                    <p>
+                      Action is selected from a bounded rule set.
+                    </p>
+                    <p>
+                      Deterministic mapping: state to action.
+                    </p>
+                    <p className="how-metric">
+                      Proof Signal:{" "}
+                      Goal Checks <strong>{agentsObserved}</strong> · Position Signals{" "}
+                      <strong>{locationsObserved}</strong> · Trace Lines{" "}
+                      <strong>{deferredTraceLines}</strong>
+                    </p>
+                  </article>
+
+                  <article className="how-card">
+                    <h4>Constraint Pressure</h4>
+                    <p>
+                      Capacity limits and cooldowns introduce pressure.
+                    </p>
+                    <p>
+                      Denied actions trigger controlled divergence.
+                    </p>
+                    <p>
+                      Every deviation is logged and explainable.
+                    </p>
+                    <p className="how-metric">
+                      Proof Signal:{" "}
+                      Denials <strong>{autonomyEvidence.capacityDenial}</strong> ·
+                      Cooldowns <strong>{autonomyEvidence.cooldownPenalty}</strong> ·
+                      Capacity Left <strong>{capacityLeftObserved ?? "n/a"}</strong>
+                    </p>
+                  </article>
+
+                  <article className="how-card">
+                    <h4>Adaptive Autonomy</h4>
+                    <p>
+                      Repeated denial triggers temporary goal override.
+                    </p>
+                    <p>
+                      Adaptive window expires and goal is restored.
+                    </p>
+                    <p>
+                      Behavior emerges from rule execution, not scripts.
+                    </p>
+                    <p className="how-metric">
+                      Proof Signal:{" "}
+                      Adaptation <strong>{autonomyEvidence.adaptationWanderOnce}</strong> ·
+                      Cooldown <strong>{autonomyEvidence.cooldownPenalty}</strong> ·
+                      Explain Lines <strong>{explainLines}</strong>
+                    </p>
+                  </article>
+
+                  <article className="how-card">
+                    <h4>Monad Entry Gate</h4>
+                    <p>
+                      Access requires a verified Monad mainnet transaction.
+                    </p>
+                    <p>
+                      Receipt, value, chainId, and treasury are validated.
+                    </p>
+                    <p>
+                      Reused transactions are rejected (409).
+                    </p>
+                    <p className="how-metric">
+                      Proof Signal:{" "}
+                      401 <strong>{monadGateSignals.unauthorized}</strong> · 402{" "}
+                      <strong>{monadGateSignals.paymentRequired}</strong> · 200{" "}
+                      <strong>{monadGateSignals.accepted}</strong> · 409{" "}
+                      <strong>{monadGateSignals.replayBlocked}</strong>
+                    </p>
+                  </article>
+
+                  <article className="how-card">
+                    <h4>Determinism Proof</h4>
+                    <p>
+                      Identical inputs produce identical outcomes.
+                    </p>
+                    <p>
+                      Replay yields matching traces and signatures.
+                    </p>
+                    <p>
+                      The system is auditable, not probabilistic.
+                    </p>
+                    <p className="how-metric">
+                      Proof Signal: Artifact output MATCH/MISMATCH via{" "}
+                      <code>scripts/determinism_proof.sh</code>
+                    </p>
+                  </article>
+                </div>
               </div>
             ) : null}
           </section>

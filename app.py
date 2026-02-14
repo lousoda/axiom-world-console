@@ -1272,6 +1272,67 @@ def scenario_autonomy_proof():
         log("scenario_loaded", {"name": "autonomy_proof", "agents": len(world_state["agents"])})
         return {"ok": True, "scenario": "autonomy_proof", "agents": world_state["agents"]}
 
+@app.post("/scenario/autonomy_breathing")
+def scenario_autonomy_breathing():
+    """
+    Capacity headroom showcase:
+    - workshop capacity is increased to 2
+    - one earn-goal agent occupies workshop
+    - supporting wander agents keep autonomy visible without saturating capacity
+    """
+    with WORLD_STATE_LOCK:
+        reset_in_place(preserve_used_tx_hashes=not ALLOW_FREE_JOIN)
+
+        econ = world_state.get("economy", {})
+        if not isinstance(econ, dict):
+            econ = {}
+            world_state["economy"] = econ
+        econ["workshop_capacity_per_tick"] = 2
+        econ["workshop_capacity_left"] = 2
+
+        agents = [
+            {"name": "agent_1", "deposit_mon": 8, "goal": "earn", "auto": True, "pos": "workshop"},
+            {"name": "agent_2", "deposit_mon": 5, "goal": "wander", "auto": True, "pos": "spawn"},
+            {"name": "agent_3", "deposit_mon": 5, "goal": "wander", "auto": True, "pos": "market"},
+        ]
+
+        locations = world_state.get("locations", [])
+        if not isinstance(locations, list):
+            locations = ["spawn", "market", "workshop"]
+            world_state["locations"] = locations
+
+        for a in agents:
+            pos = a.get("pos", "spawn")
+            if not isinstance(pos, str) or pos not in locations:
+                pos = "spawn"
+
+            agent = {
+                "id": _next_agent_id(),
+                "name": a["name"],
+                "balance_mon": a["deposit_mon"],
+                "pos": pos,
+                "status": "active",
+                "inventory": [],
+                "auto": bool(a.get("auto", False)),
+                "cooldown_until_tick": 0,
+                "goal": a.get("goal", "earn"),
+            }
+            world_state["agents"].append(agent)
+            log("join", {"agent_id": agent["id"], "name": agent["name"], "deposit_mon": agent["balance_mon"]})
+            if agent["auto"]:
+                log("auto_enabled", {"agent_id": agent["id"]})
+            log("goal_set", {"agent_id": agent["id"], "goal": agent["goal"]})
+
+        log(
+            "scenario_loaded",
+            {
+                "name": "autonomy_breathing",
+                "agents": len(world_state["agents"]),
+                "workshop_capacity_per_tick": 2,
+            },
+        )
+        return {"ok": True, "scenario": "autonomy_breathing", "agents": world_state["agents"]}
+
 @app.get("/metrics")
 def metrics():
     econ = world_state.get("economy", {})

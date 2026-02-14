@@ -19,18 +19,38 @@ function sanitizeGateKey(rawKey: string): string {
     .replace(/^['"`]+|['"`]+$/g, "")
 }
 
-function shouldUseDevProxy(error: unknown): boolean {
+function isLocalUiRuntime(): boolean {
   if (typeof window === "undefined") {
     return false
   }
-  const isLocalUi =
+  return (
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1"
-  if (!isLocalUi) {
+  )
+}
+
+function shouldUseDevProxy(error: unknown): boolean {
+  if (!isLocalUiRuntime()) {
     return false
   }
   const text = error instanceof Error ? error.message : ""
-  return text.includes("Failed to fetch") || text.includes("Load failed")
+  return (
+    text.includes("Failed to fetch") ||
+    text.includes("Load failed") ||
+    text.includes("NetworkError")
+  )
+}
+
+function shouldProxyByOrigin(baseUrl: string): boolean {
+  if (!isLocalUiRuntime()) {
+    return false
+  }
+  try {
+    const targetOrigin = new URL(baseUrl).origin
+    return targetOrigin !== window.location.origin
+  } catch {
+    return false
+  }
 }
 
 function buildHeaders(gateKey: string, body?: string): HeadersInit {
@@ -102,14 +122,33 @@ export async function requestApi<T>(
   method: "GET" | "POST",
   body?: unknown,
 ): Promise<ApiCallResult<T>> {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+
+  // In local UI dev, always proxy cross-origin API calls to avoid CORS/preflight failures.
+  if (shouldProxyByOrigin(normalizedBaseUrl)) {
+    return proxyRequest<T>({
+      target: normalizedBaseUrl,
+      path,
+      method,
+      body: body ?? null,
+      gateKey,
+    })
+  }
+
   try {
-    return await directRequest<T>(baseUrl, gateKey, path, method, body)
+    return await directRequest<T>(
+      normalizedBaseUrl,
+      gateKey,
+      path,
+      method,
+      body,
+    )
   } catch (error) {
     if (!shouldUseDevProxy(error)) {
       throw error
     }
     return proxyRequest<T>({
-      target: normalizeBaseUrl(baseUrl),
+      target: normalizedBaseUrl,
       path,
       method,
       body: body ?? null,
@@ -131,7 +170,10 @@ export async function loadScenarioBasicAuto(baseUrl: string, gateKey: string) {
   )
 }
 
-export type ScenarioKey = "basic_auto" | "autonomy_proof"
+export type ScenarioKey =
+  | "basic_auto"
+  | "autonomy_proof"
+  | "autonomy_breathing"
 
 export async function loadScenario(
   baseUrl: string,

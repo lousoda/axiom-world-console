@@ -375,6 +375,28 @@ def test_autonomy_proof_scenario_surfaces_denial_and_adaptation():
     assert adapted, "Expected one-shot policy adaptation after capacity denial"
 
 
+def test_autonomy_breathing_scenario_keeps_capacity_headroom():
+    app.reset_in_place()
+    scenario = app.scenario_autonomy_breathing()
+    assert scenario["ok"] is True
+    assert scenario["scenario"] == "autonomy_breathing"
+    assert len(scenario.get("agents", [])) >= 3
+
+    start_metrics = app.metrics()
+    assert start_metrics["workshop_capacity_per_tick"] == 2
+    assert start_metrics["workshop_capacity_left"] == 2
+
+    cap_values = []
+    for _ in range(6):
+        out = app.auto_tick(limit_agents=50)
+        assert out["ok"] is True
+        current_metrics = app.metrics()
+        cap_values.append(int(current_metrics["workshop_capacity_left"]))
+
+    assert any(v > 0 for v in cap_values), "Expected visible capacity headroom (>0) in breathing scenario"
+    assert all(v <= 2 for v in cap_values)
+
+
 def test_adaptive_goal_override_restores_after_capacity_streak():
     app.reset_in_place()
 
