@@ -333,7 +333,6 @@ curl -sS -o /tmp/reset_no_key.json -w "%{http_code}" -X POST http://127.0.0.1:80
 - Treasury receives entry payments (configured via env)
 
 **Proof Artifacts**
-- Demo video (≤ 2 minutes): attached in submission package
 - Example mainnet transaction hash verified in smoke:
   - `0x2987fa5798f7f0731b0ab3d573940b00a2b5a291e941fa86e359080c14d45286`
 - Treasury address:

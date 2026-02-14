@@ -1557,7 +1557,7 @@ function App() {
 
                   <article className="judge-card">
                     <h4>Submission Pack</h4>
-                    <p>Repository, demo video, and Monad integration notes should be included.</p>
+                    <p>Repository, deployment link, and Monad integration notes should be included.</p>
                     <p>Keep proof artifacts reproducible via:</p>
                     <p className="how-metric">
                       <code>scripts/determinism_proof.sh</code> + <code>scripts/manual_diag.sh</code>

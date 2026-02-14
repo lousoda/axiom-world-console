@@ -49,7 +49,7 @@
 
 1. External Monad RPC instability can still impact live strict demo.
 2. Reusing the same tx hash in strict runs correctly returns `409` (operational process risk, not a code bug).
-3. Submission formalities are still pending (public repo link, demo video link, form fields).
+3. Submission formalities are still pending (public repo link, final form fields).
 
 ## Security Hardening Status
 
@@ -65,7 +65,7 @@ Already implemented:
 
 1. Submission readiness:
 - Add public remote and verify repository accessibility.
-- Prepare final 2-minute demo video link.
+- Prepare final 2-minute demo walkthrough artifact reference.
 - Complete submission form fields with exact evidence references.
 
 2. Operational rigor:
@@ -87,7 +87,7 @@ The primary remaining work is submission packaging and operational discipline, n
 1. Rules alignment (Agent Track + Bounty):
 - Agent Track explicitly says no token launch is required.
 - For bounties, project must meet the specific bounty PRD.
-- Mandatory submission includes public repo, demo video, and Monad integration explanation.
+- Mandatory submission includes public repo and Monad integration explanation, plus the required submission artifacts for the selected track.
 - Contract addresses are required only if applicable.
 
 2. World Model Agent PRD alignment:
