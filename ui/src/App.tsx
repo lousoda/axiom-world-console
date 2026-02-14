@@ -105,6 +105,14 @@ function formatUnknown(value: unknown): string {
   }
 }
 
+function extractTickLabel(text: string): string | null {
+  const match = text.match(/\btick\s+(\d+)/i)
+  if (!match || !match[1]) {
+    return null
+  }
+  return `tick ${match[1]}`
+}
+
 function App() {
   const [baseUrl, setBaseUrl] = useState<string>(() =>
     loadStorageValue(STORAGE_BASE_URL, DEFAULT_BASE_URL),
@@ -591,11 +599,6 @@ function App() {
 
   return (
     <main className="console-root">
-      <header className="console-header">
-        <h1>World Console</h1>
-        <p>Phase 2: FLOW engine and autonomous observation loop.</p>
-      </header>
-
       <div className="console-layout">
         <aside className="console-side">
           <section className="connection-card">
@@ -868,7 +871,10 @@ function App() {
 
             {activeTab === "TRACE" ? (
               <div className="tab-panel">
-                <h3>TRACE</h3>
+                <div className="forensic-head">
+                  <h3>TRACE</h3>
+                  <p>Deferred event stream, newest first.</p>
+                </div>
                 {latestEvidencePreview.length > 0 ? (
                   <section className="evidence-peek">
                     <h4>Latest Evidence</h4>
@@ -901,20 +907,26 @@ function App() {
                       .map((entry, index) => {
                         const entryText = typeof entry === "string" ? entry : formatUnknown(entry)
                         const tags = evidenceTagsForText(entryText)
+                        const tickLabel = extractTickLabel(entryText)
                         return (
-                          <li key={index} className="trace-item">
-                            {tags.length > 0 ? (
-                              <div className="evidence-tags">
-                                {tags.map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
+                          <li key={index} className="trace-item forensic-item">
+                            <div className="forensic-meta">
+                              <span className="forensic-tick">
+                                {tickLabel ?? "event"}
+                              </span>
+                              {tags.length > 0 ? (
+                                <div className="evidence-tags">
+                                  {tags.map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
                             <pre>{entryText}</pre>
                           </li>
                         )
@@ -926,7 +938,10 @@ function App() {
 
             {activeTab === "EXPLAIN" ? (
               <div className="tab-panel">
-                <h3>EXPLAIN</h3>
+                <div className="forensic-head">
+                  <h3>EXPLAIN</h3>
+                  <p>Forensic reasoning trail after each world step.</p>
+                </div>
                 {latestEvidencePreview.length > 0 ? (
                   <section className="evidence-peek">
                     <h4>Latest Evidence</h4>
@@ -958,20 +973,22 @@ function App() {
                       .reverse()
                       .map((line, index) => {
                         const tags = evidenceTagsForText(line)
+                        const tickLabel = extractTickLabel(line)
                         return (
-                          <li key={index}>
-                            {tags.length > 0 ? (
-                              <div className="evidence-tags">
-                                {tags.map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : null}
+                          <li key={index} className="forensic-item">
+                            <div className="forensic-meta">
+                              <span className="forensic-tick">
+                                {tickLabel ?? "event"}
+                              </span>
+                              {tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
                             <div className="explain-line">{line}</div>
                           </li>
                         )
