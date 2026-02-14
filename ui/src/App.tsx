@@ -61,7 +61,14 @@ const SCENARIO_OPTIONS: Array<{ key: ScenarioKey; label: string }> = [
 ]
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
-type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN" | "HOW_IT_WORKS"
+type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN" | "JUDGE_LAYER" | "HOW_IT_WORKS"
+
+type JudgeCheck = {
+  id: string
+  label: string
+  pass: boolean
+  hint: string
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -929,6 +936,75 @@ function App() {
     scenarioKey === "autonomy_breathing"
       ? "Derived from EXPLAIN rhythm: idle vs active cycles and capacity headroom."
       : "Derived from EXPLAIN forensic trace."
+  const autonomySignalTotal = useMemo(
+    () => evidenceRows.reduce((sum, row) => sum + row.value, 0),
+    [evidenceRows],
+  )
+  const judgeChecks = useMemo<JudgeCheck[]>(
+    () => [
+      {
+        id: "guard",
+        label: "API guard observed (401 without key)",
+        pass: statusHits[401] > 0,
+        hint: "Run Validate without key at least once.",
+      },
+      {
+        id: "authorized",
+        label: "Authorized read path works (200 with key/session)",
+        pass: statusHits[200] > 0 && (gateKey.trim().length > 0 || sessionAuthenticated),
+        hint: "Load key or session-auth, then Validate.",
+      },
+      {
+        id: "scenario",
+        label: "Scenario loaded with active agents",
+        pass: agentsObserved >= 3,
+        hint: "Pick Proof/Breathing and click Load Scene.",
+      },
+      {
+        id: "flow",
+        label: "FLOW progressed for at least 10 cycles",
+        pass: flowCycles >= 10,
+        hint: "Run LIVE for ~20-30 seconds.",
+      },
+      {
+        id: "trace",
+        label: "TRACE + EXPLAIN populated",
+        pass: deferredTraceLines > 0 && explainLines > 0,
+        hint: "Keep FLOW running and open TRACE/EXPLAIN.",
+      },
+      {
+        id: "evidence",
+        label: "Autonomy evidence is visible",
+        pass: autonomySignalTotal > 0 || latestEvidencePreview.length > 0,
+        hint: "Wait for DENIAL/COOLDOWN/ADAPTATION events.",
+      },
+      {
+        id: "stability",
+        label: "No upstream 5xx during current run",
+        pass: statusHits[502] === 0,
+        hint: "If 5xx appears, pause FLOW and re-validate endpoint.",
+      },
+    ],
+    [
+      agentsObserved,
+      autonomySignalTotal,
+      deferredTraceLines,
+      explainLines,
+      flowCycles,
+      gateKey,
+      latestEvidencePreview.length,
+      sessionAuthenticated,
+      statusHits,
+    ],
+  )
+  const judgePassCount = useMemo(
+    () => judgeChecks.filter((check) => check.pass).length,
+    [judgeChecks],
+  )
+  const judgeReady = useMemo(
+    () => judgeChecks.every((check) => check.pass),
+    [judgeChecks],
+  )
 
   const pressureSignalA =
     scenarioKey === "autonomy_breathing"
@@ -1211,6 +1287,14 @@ function App() {
                 </button>
                 <button
                   className={`tab-btn ${
+                    activeTab === "JUDGE_LAYER" ? "tab-active" : ""
+                  }`}
+                  onClick={() => setActiveTab("JUDGE_LAYER")}
+                >
+                  JUDGE
+                </button>
+                <button
+                  className={`tab-btn ${
                     activeTab === "HOW_IT_WORKS" ? "tab-active" : ""
                   }`}
                   onClick={() => setActiveTab("HOW_IT_WORKS")}
@@ -1413,6 +1497,76 @@ function App() {
                       })}
                   </ul>
                 )}
+              </div>
+            ) : null}
+
+            {activeTab === "JUDGE_LAYER" ? (
+              <div className="tab-panel">
+                <h3>JUDGE LAYER</h3>
+                <p className="how-sequence">
+                  Bounty-fit evidence pack for a 2-minute judge walkthrough.
+                </p>
+                <div className={`judge-banner ${judgeReady ? "judge-ready" : "judge-wait"}`}>
+                  <strong>{judgeReady ? "READY FOR JUDGING" : "IN PROGRESS"}</strong>
+                  <span>
+                    Checks passed: {judgePassCount}/{judgeChecks.length}
+                  </span>
+                </div>
+
+                <div className="judge-grid">
+                  <article className="judge-card">
+                    <h4>Bounty Score Map</h4>
+                    <p>PRD Adherence: <strong>40%</strong></p>
+                    <p>Technical Implementation: <strong>30%</strong></p>
+                    <p>Monad Integration: <strong>20%</strong></p>
+                    <p>Innovation: <strong>10%</strong></p>
+                    <p className="how-metric">
+                      Source: Moltiverse Rules (updated February 3, 2026).
+                    </p>
+                  </article>
+
+                  <article className="judge-card">
+                    <h4>Live Judge Checks</h4>
+                    <ul className="judge-check-list">
+                      {judgeChecks.map((check) => (
+                        <li key={check.id} className={check.pass ? "judge-check-pass" : "judge-check-wait"}>
+                          <div>
+                            <span>{check.label}</span>
+                            <small>{check.hint}</small>
+                          </div>
+                          <strong>{check.pass ? "PASS" : "WAIT"}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+
+                  <article className="judge-card">
+                    <h4>2-Minute Demo Script</h4>
+                    <ol className="judge-steps">
+                      <li>Validate endpoint with key/session.</li>
+                      <li>Load scenario ({scenarioKey}) and start LIVE.</li>
+                      <li>Show WORLD evolution for 10+ cycles.</li>
+                      <li>Open TRACE + EXPLAIN and point at evidence tags.</li>
+                    </ol>
+                    <p className="how-metric">
+                      Current run: Cycles <strong>{flowCycles}</strong> · Trace{" "}
+                      <strong>{deferredTraceLines}</strong> · Explain{" "}
+                      <strong>{explainLines}</strong>
+                    </p>
+                  </article>
+
+                  <article className="judge-card">
+                    <h4>Submission Pack</h4>
+                    <p>Repository, demo video, and Monad integration notes should be included.</p>
+                    <p>Keep proof artifacts reproducible via:</p>
+                    <p className="how-metric">
+                      <code>scripts/determinism_proof.sh</code> + <code>scripts/manual_diag.sh</code>
+                    </p>
+                    <p>
+                      Deadline reference: <strong>February 15, 2026, 11:59 PM ET</strong>.
+                    </p>
+                  </article>
+                </div>
               </div>
             ) : null}
 

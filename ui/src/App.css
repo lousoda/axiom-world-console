@@ -907,6 +907,133 @@
   color: var(--ui-text-soft);
 }
 
+.judge-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--ui-input-border);
+  background: #08080c;
+}
+
+.judge-banner strong {
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
+}
+
+.judge-banner span {
+  font-size: 0.72rem;
+  color: var(--ui-text-soft);
+}
+
+.judge-ready {
+  border-color: #385145;
+  background: #090d0b;
+}
+
+.judge-ready strong {
+  color: #bfe4d2;
+}
+
+.judge-wait {
+  border-color: #4f4230;
+  background: #0e0b08;
+}
+
+.judge-wait strong {
+  color: #e4ccae;
+}
+
+.judge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.judge-card {
+  border: 1px solid var(--ui-input-border);
+  background: #08080c;
+  padding: 9px;
+}
+
+.judge-card h4 {
+  margin: 0 0 8px;
+  font-size: 0.81rem;
+  color: var(--ui-text);
+}
+
+.judge-card p {
+  margin: 0 0 7px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--ui-text-soft);
+}
+
+.judge-card p:last-child {
+  margin-bottom: 0;
+}
+
+.judge-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.judge-check-pass,
+.judge-check-wait {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--ui-border);
+  background: #09090d;
+  padding: 6px 7px;
+}
+
+.judge-check-pass strong,
+.judge-check-wait strong {
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+}
+
+.judge-check-pass strong {
+  color: #bfe4d2;
+}
+
+.judge-check-wait strong {
+  color: #e4ccae;
+}
+
+.judge-check-pass span,
+.judge-check-wait span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--ui-text);
+}
+
+.judge-check-pass small,
+.judge-check-wait small {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.66rem;
+  color: var(--ui-text-dim);
+}
+
+.judge-steps {
+  margin: 0 0 8px 18px;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.judge-steps li {
+  font-size: 0.74rem;
+  color: var(--ui-text-soft);
+}
+
 @media (max-width: 840px) {
   .console-root {
     height: auto;
@@ -950,6 +1077,10 @@
   }
 
   .how-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .judge-grid {
     grid-template-columns: 1fr;
   }
 }
