@@ -1,8 +1,36 @@
-# Ops Checklist (No-Confusion)
+# Ops Checklist
 
-Single source of truth for operator notes and quick verification commands.
+This checklist is an operational constraint system. It exists to eliminate ambiguity during a live demo and to reduce variance in execution.
 
-## 1) Canonical Run Commands
+There are only two valid execution modes:
+1. Local deterministic mode
+2. Live token-gated mode
+
+Everything else in this document is about protecting those two modes from operator error, race conditions, infra drift, or replay attacks.
+
+## 1) Two-Min Judge Quick Check
+
+The first block defines the minimal safe demonstration surface.
+
+Deterministic local:
+```bash
+export WORLD_GATE_KEY="demo"
+bash scripts/run_demo.sh ./.env.demo.local
+bash scripts/determinism_proof.sh http://127.0.0.1:8011
+```
+
+Live token-gated:
+```bash
+export WORLD_GATE_KEY="demo"
+export SMOKE_ENTRY_TX_HASH="0x<fresh-64-hex-mainnet-tx>"
+bash scripts/demo_gate.sh live 8011
+```
+
+**Note:** Live mode adds external dependency risk (RPC instability, network latency). That's why it's optional and gated behind necessity.
+
+## 2) Canonical Run Commands
+
+This section removes "creative improvisation." The canonical commands prevent config drift.
 
 Local profile:
 
@@ -25,14 +53,15 @@ Stop:
 docker compose down --remove-orphans
 ```
 
-## 2) Hard Rules (Avoid Demo Failures)
+## 3) Hard Rules
 
+Each rule addresses a specific failure mode. Specifically:
 1. Do not mix profiles in one running session.
 2. For each live strict run use a fresh tx hash (`409` on reuse is expected).
 3. Use one operator for POST mutations; observers should use read-only endpoints.
 4. Keep `--workers 1` only (already enforced by run scripts and compose).
 
-## 3) Quick Status Matrix (Live)
+## 4) Quick Status Matrix (Live)
 
 When API runs in live profile:
 
@@ -41,7 +70,7 @@ When API runs in live profile:
 3. `POST /join` with header + fresh tx -> `200`.
 4. Reusing same tx -> `409`.
 
-## 4) Fast Stress Sanity (Local)
+## 5) Fast Stress Sanity (Local)
 
 Read burst (should be all `200`):
 
@@ -57,25 +86,25 @@ for i in $(seq 1 120); do
 done | sort | uniq -c
 ```
 
-## 5) Handoff to Teammate
+## 6) Handoff to Teammate
 
 Before handoff, include:
 
 1. Current branch and commit hash.
 2. Which profile was validated last (`local` or `live`).
-3. Last used tx hash list location (`.demo/used_tx_hashes.txt`) for strict runs.
+3. Target URL used in last successful gate run.
+4. Last used tx hash list location (`.demo/used_tx_hashes.txt`) for strict runs.
 
-## 6) Fly Deploy Discipline
+## 7) Fly Deploy Discipline
 
-1. Keep Fly single-machine deterministic behavior.
-2. Use immediate strategy to avoid temporary multi-machine rollout for in-memory state:
+Keep Fly single-machine deterministic behavior. Use immediate strategy to avoid temporary multi-machine rollout for in-memory state:
 
 ```toml
 [deploy]
   strategy = "immediate"
 ```
 
-3. After each deploy run:
+After each deploy run:
 
 ```bash
 flyctl scale count 1
@@ -83,7 +112,13 @@ flyctl machine list
 curl -sS -i https://world-model-agent-api.fly.dev/
 ```
 
-## 7) Fly Recovery (Only if Rollout Stuck >2 min)
+## 8) Port / Mode Matrix
+- Local scripts (`run_demo.sh`, `demo_gate.sh`): port **8011**
+- Docker gate (`docker_gate.sh`): port **8001**
+- Freeze doc legacy manual uvicorn: port **8001**
+- Fly deploy: served over **443/https** via Fly router
+
+## 9) Fly Recovery (Only if Rollout Stuck >2 min)
 
 Normal quick check:
 
@@ -101,12 +136,11 @@ flyctl machine list
 curl -sS -i https://world-model-agent-api.fly.dev/
 ```
 
-Note:
-1. Do not run restart when machine is already `started` with `1/1` checks.
+**Note:** Do not run restart when machine is already `started` with `1/1` checks.
 
-## 8) Determinism Artifact Check (Local or Fly)
+## 10) Determinism Artifact Check
 
-Run reproducibility proof (two runs from reset + hash compare):
+Run reproducibility proof (two runs from reset and hash compare):
 
 ```bash
 export WORLD_GATE_KEY="diagkey"

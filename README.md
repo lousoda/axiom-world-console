@@ -65,8 +65,9 @@ Operational / generated artifacts:
 - UI/product differentiation plan (post-freeze): `docs/UI_PRODUCT_PLAN.md`
 - UI execution checklist (must/should/bonus + QA gates): `docs/UI_EXECUTION_CHECKLIST.md`
 - UI public deploy runbook (static host + proxy routing): `docs/UI_PUBLIC_DEPLOY_RUNBOOK.md`
+- Repo handoff/push discipline: `docs/REPO_GUIDELINES.md`
+- Pre-commit closure list: `docs/PRE_COMMIT_CLOSURE_CHECKLIST.md`
 - One-command gate: `scripts/demo_gate.sh`
-- `Refresh`
 
 Quick gate runs:
 

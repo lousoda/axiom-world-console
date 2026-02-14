@@ -3,6 +3,12 @@
 This file is the practical implementation checklist for the UI layer.
 Backend behavior is frozen and must not be changed.
 
+## 0) Judge Evidence Hooks
+
+1. Surface autonomy without extra clicks: show state shifting while FLOW is `LIVE`.
+2. Make constraints visible: badges for `401/402/409/429` and explain tags.
+3. Point to deterministic proof: include note/link that artifacts come from `scripts/determinism_proof.sh`.
+
 ## 1) Hard Constraints (Non-Negotiable)
 
 1. UI is an observation interface, not a direct control dashboard.
@@ -48,6 +54,13 @@ Not allowed:
 Acceptance rule:
 
 1. if an effect is noticeable before meaningful, reduce intensity.
+
+## 2.4) Acceptance Gates
+
+1. Perf: initial paint <2s on a mid-tier laptop; flow loop stable for 10 minutes; graph render <200ms per refresh.
+2. A11y: focusable controls, sane tab order, WCAG AA text contrast, motion subtle enough to preserve readability.
+3. Error handling: `401/402/409` surfaced as badges; flow stops on `401/402/409`; backoff on `429`.
+4. Determinism support: polling cadence and rendering remain deterministic for identical payloads.
 
 ## 2.1) Baseline File Structure
 
@@ -268,3 +281,10 @@ UI is done when all are true:
 2. Stop for confirmation after each phase.
 3. If concept and implementation conflict, concept wins.
 4. If a change risks backend stability, do not proceed without explicit approval.
+
+## 9) Release / Readiness Checklist
+
+1. `npm run test` and `npm run build` pass.
+2. Default endpoint is `/api` for public deploy and override is visible in UI.
+3. Cache busting is enabled via hashed build outputs; CDN cache is purged on deploy (see `docs/UI_PUBLIC_DEPLOY_RUNBOOK.md`).
+4. Last verified date and API origin are recorded in deploy runbook.
