@@ -1,0 +1,26 @@
+:8080 {
+  encode zstd gzip
+
+  @api path /api /api/*
+  handle @api {
+    uri strip_prefix /api
+    reverse_proxy https://world-model-agent-api.fly.dev {
+      header_up Host world-model-agent-api.fly.dev
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Proto {scheme}
+    }
+  }
+
+  handle {
+    root * /srv
+    try_files {path} /index.html
+    file_server
+  }
+
+  header {
+    X-Frame-Options "DENY"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+}
