@@ -41,12 +41,17 @@ const STORAGE_BASE_URL = "world_console_base_url"
 const STORAGE_GATE_KEY = "world_console_gate_key"
 const STORAGE_SCENARIO = "world_console_scenario"
 const STORAGE_SAFE_MODE = "world_console_safe_mode"
-const OBSERVED_CODES = [200, 401, 402, 409, 429] as const
+const OBSERVED_CODES = [200, 401, 402, 409, 429, 502] as const
 const TRACE_LIMIT = 40
 const EXPLAIN_LIMIT = 80
 const FLOW_LIMIT_AGENTS = 50
 const SCENE_REFRESH_LOGS_LIMIT = 28
 const SCENE_REFRESH_EXPLAIN_LIMIT = 60
+const SCENARIO_OPTIONS: Array<{ key: ScenarioKey; label: string }> = [
+  { key: "autonomy_proof", label: "Autonomy Proof" },
+  { key: "autonomy_breathing", label: "Autonomy Breathing" },
+  { key: "basic_auto", label: "Basic Auto" },
+]
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN" | "HOW_IT_WORKS"
@@ -156,6 +161,7 @@ function App() {
     402: 0,
     409: 0,
     429: 0,
+    502: 0,
   })
 
   const [worldSnapshot, setWorldSnapshot] = useState<WorldSnapshot | null>(null)
@@ -173,10 +179,14 @@ function App() {
       adaptationWanderOnce: 0,
     },
   )
+  const [eventPulse, setEventPulse] = useState<
+    "none" | "denial" | "cooldown" | "adaptation"
+  >("none")
 
   const flowTokenRef = useRef(0)
   const keyFileInputRef = useRef<HTMLInputElement | null>(null)
   const seenExplainEvidenceRef = useRef<Set<string>>(new Set())
+  const pulseTimeoutRef = useRef<number | null>(null)
 
   const recordStatus = useCallback((status: number, message: string) => {
     setLastStatus(status)
@@ -230,7 +240,11 @@ function App() {
 
       const nonOk = responses.find((r) => r.status !== 200)
       if (nonOk) {
-        recordStatus(nonOk.status, bodyPreview(nonOk.rawText))
+        const nonOkMessage =
+          nonOk.status >= 500
+            ? `Upstream unavailable (status ${nonOk.status}) while refreshing snapshots.`
+            : bodyPreview(nonOk.rawText)
+        recordStatus(nonOk.status, nonOkMessage)
         return { stopStatus: null, refreshError: false }
       }
 
@@ -273,7 +287,9 @@ function App() {
       const message =
         result.status === 200
           ? "Metrics link verified."
-          : bodyPreview(result.rawText)
+          : result.status >= 500
+            ? `Upstream unavailable (status ${result.status}). Verify local API server and endpoint.`
+            : bodyPreview(result.rawText)
       recordStatus(result.status, message)
     } catch (error) {
       setLastStatus(null)
@@ -418,6 +434,19 @@ function App() {
           recordStatus(status, cycle.message)
         }
 
+        const upstreamErrorStatus = cycle.statusTrail.find((status) => status >= 500)
+        if (upstreamErrorStatus !== undefined) {
+          setFlowMode("PAUSE")
+          setFlowNote(
+            `FLOW paused on ${upstreamErrorStatus}: upstream unavailable. Verify API server and endpoint.`,
+          )
+          recordStatus(
+            upstreamErrorStatus,
+            `Upstream unavailable (status ${upstreamErrorStatus}).`,
+          )
+          return
+        }
+
         if (cycle.world) {
           setWorldSnapshot(cycle.world)
         }
@@ -432,10 +461,15 @@ function App() {
         }
 
         setFlowCycles((value) => value + 1)
-        setFlowNote(
+        const baseFlowNote =
           cycle.backoffMs > 0
             ? `${cycle.message} Backoff ${cycle.backoffMs}ms.`
-            : cycle.message,
+            : cycle.message
+        const activeAgents = cycle.world?.agents?.length ?? 0
+        setFlowNote(
+          activeAgents === 0
+            ? `${baseFlowNote} No agents active: choose a scenario and load scene.`
+            : baseFlowNote,
         )
 
       if (cycle.stopFlow) {
@@ -507,7 +541,35 @@ function App() {
       adaptationWanderOnce:
         prev.adaptationWanderOnce + deltaAdaptationWanderOnce,
     }))
+
+    let nextPulse: "none" | "denial" | "cooldown" | "adaptation" = "none"
+    if (deltaCapacityDenial > 0) {
+      nextPulse = "denial"
+    } else if (deltaCooldownPenalty > 0) {
+      nextPulse = "cooldown"
+    } else if (deltaAdaptationWanderOnce > 0) {
+      nextPulse = "adaptation"
+    }
+
+    if (nextPulse !== "none") {
+      setEventPulse(nextPulse)
+      if (pulseTimeoutRef.current !== null) {
+        window.clearTimeout(pulseTimeoutRef.current)
+      }
+      pulseTimeoutRef.current = window.setTimeout(() => {
+        setEventPulse("none")
+        pulseTimeoutRef.current = null
+      }, 640)
+    }
   }, [explainSnapshot])
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimeoutRef.current !== null) {
+        window.clearTimeout(pulseTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const agentsObserved = worldSnapshot?.agents?.length ?? 0
   const locationsObserved = worldSnapshot?.locations?.length ?? 0
@@ -634,36 +696,19 @@ function App() {
 
             <label>Scenario</label>
             <div className="scenario-row">
-              <button
-                className={scenarioKey === "autonomy_proof" ? "scenario-active" : ""}
-                onClick={() => {
-                  setScenarioKey("autonomy_proof")
-                  persistStorageValue(STORAGE_SCENARIO, "autonomy_proof")
-                }}
-                type="button"
-              >
-                autonomy_proof
-              </button>
-              <button
-                className={scenarioKey === "autonomy_breathing" ? "scenario-active" : ""}
-                onClick={() => {
-                  setScenarioKey("autonomy_breathing")
-                  persistStorageValue(STORAGE_SCENARIO, "autonomy_breathing")
-                }}
-                type="button"
-              >
-                autonomy_breathing
-              </button>
-              <button
-                className={scenarioKey === "basic_auto" ? "scenario-active" : ""}
-                onClick={() => {
-                  setScenarioKey("basic_auto")
-                  persistStorageValue(STORAGE_SCENARIO, "basic_auto")
-                }}
-                type="button"
-              >
-                basic_auto
-              </button>
+              {SCENARIO_OPTIONS.map((option) => (
+                <button
+                  key={option.key}
+                  className={scenarioKey === option.key ? "scenario-active" : ""}
+                  onClick={() => {
+                    setScenarioKey(option.key)
+                    persistStorageValue(STORAGE_SCENARIO, option.key)
+                  }}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
 
             <input
@@ -679,7 +724,11 @@ function App() {
                 {isTesting ? "Validating..." : "Validate Link"}
               </button>
               <button onClick={handleImportKeyClick}>Load Key File</button>
-              <button onClick={handleLoadScenario} disabled={!canLoadScenario}>
+              <button
+                className="button-primary"
+                onClick={handleLoadScenario}
+                disabled={!canLoadScenario}
+              >
                 {isScenarioLoading ? "Loading Scene..." : "Load Scene"}
               </button>
             </div>
@@ -821,6 +870,16 @@ function App() {
             {activeTab === "WORLD" ? (
               <div className="tab-panel tab-panel-world">
                 <div className="world-stage">
+                  {agentsObserved === 0 ? (
+                    <div className="world-alert">
+                      No agents active. Choose scenario and press Load Scene.
+                    </div>
+                  ) : null}
+                  <div
+                    className={`world-pulse ${
+                      eventPulse !== "none" ? `pulse-${eventPulse}` : ""
+                    }`}
+                  />
                   <GraphView
                     graph={stateFieldGraph}
                     fx={graphFx}

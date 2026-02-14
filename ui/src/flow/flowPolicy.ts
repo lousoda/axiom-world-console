@@ -8,7 +8,7 @@ export const FLOW_DELAY_MS: Record<FlowMode, number> = {
 
 export const MAX_BACKOFF_MS = 5000
 export const BACKOFF_STEP_MS = 700
-export const EXPLAIN_PULL_EVERY = 3
+export const EXPLAIN_PULL_EVERY = 1
 
 const STOP_STATUSES: StopStatusCode[] = [401, 402, 409]
 

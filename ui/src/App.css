@@ -25,7 +25,7 @@
 .console-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: 318px minmax(0, 1fr);
+  grid-template-columns: clamp(300px, 24vw, 388px) minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -92,20 +92,22 @@
   border-radius: 0;
   background: #09090d;
   color: var(--ui-text-soft);
-  padding: 7px 9px;
+  padding: 7px 10px;
   font-size: 0.76rem;
   line-height: 1.2;
+  min-height: 38px;
   cursor: pointer;
   transition:
     transform 130ms ease,
     background 130ms ease;
-  white-space: normal;
-  text-wrap: balance;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .scenario-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -114,10 +116,14 @@
   border-radius: 0;
   background: #09090d;
   color: var(--ui-text-soft);
-  padding: 6px 8px;
-  font-size: 0.76rem;
-  line-height: 1.2;
+  padding: 6px 6px;
+  font-size: 0.72rem;
+  line-height: 1.1;
   cursor: pointer;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .scenario-row button:hover {
@@ -143,8 +149,23 @@
 .action-row {
   display: grid;
   gap: 7px;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
+}
+
+.action-row button {
+  min-height: 40px;
+  font-size: 0.76rem;
+}
+
+.button-primary {
+  border-color: var(--ui-border-strong) !important;
+  color: var(--ui-accent-soft) !important;
+  background: #15151d !important;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: #191924 !important;
 }
 
 .flow-card h2,
@@ -389,6 +410,57 @@
   height: calc(100vh - 132px);
   max-height: 900px;
   overflow: hidden;
+}
+
+.world-alert {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 4;
+  border: 1px solid var(--ui-border);
+  background: rgba(8, 8, 12, 0.92);
+  color: var(--ui-text-dim);
+  font-size: 0.72rem;
+  letter-spacing: 0.01em;
+  padding: 5px 8px;
+}
+
+.world-pulse {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.world-pulse.pulse-denial {
+  animation: worldPulseFlash 640ms ease-out;
+  background:
+    radial-gradient(circle at 58% 52%, rgba(255, 170, 196, 0.22), rgba(255, 170, 196, 0) 44%),
+    radial-gradient(circle at 30% 68%, rgba(215, 84, 126, 0.14), rgba(215, 84, 126, 0) 38%);
+}
+
+.world-pulse.pulse-cooldown {
+  animation: worldPulseFlash 640ms ease-out;
+  background:
+    radial-gradient(circle at 54% 48%, rgba(189, 178, 236, 0.2), rgba(189, 178, 236, 0) 44%),
+    radial-gradient(circle at 70% 30%, rgba(141, 132, 219, 0.13), rgba(141, 132, 219, 0) 36%);
+}
+
+.world-pulse.pulse-adaptation {
+  animation: worldPulseFlash 640ms ease-out;
+  background:
+    radial-gradient(circle at 55% 52%, rgba(192, 246, 227, 0.2), rgba(192, 246, 227, 0) 44%),
+    radial-gradient(circle at 35% 42%, rgba(111, 190, 159, 0.13), rgba(111, 190, 159, 0) 36%);
+}
+
+@keyframes worldPulseFlash {
+  0% {
+    opacity: 0.48;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 .graph-canvas {
