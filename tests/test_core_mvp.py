@@ -20,6 +20,7 @@ import app
 
 def _write_snapshot(world_state_obj: dict) -> str:
     fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
     Path(path).write_text(
         json.dumps(
             {
@@ -35,6 +36,7 @@ def _write_snapshot(world_state_obj: dict) -> str:
 
 def test_persist_load_invalid_json_returns_400():
     fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
     p = Path(path)
     p.write_text("{not valid json", encoding="utf-8")
 
@@ -642,8 +644,9 @@ def test_autosec_defaults_enable_mutating_guards_on_fly_when_unset():
 
 def test_persist_save_rejects_absolute_request_path():
     app.reset_in_place()
+    outside_path = str((Path(tempfile.gettempdir()) / "blocked_snapshot.json").resolve())
     try:
-        app.persist_save(app.PersistSaveRequest(path="/tmp/blocked_snapshot.json", include_logs=False))
+        app.persist_save(app.PersistSaveRequest(path=outside_path, include_logs=False))
         assert False, "Expected HTTPException"
     except HTTPException as e:
         assert e.status_code == 400
