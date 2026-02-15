@@ -2,6 +2,7 @@
 
 This file is the practical implementation checklist for the UI layer.
 Backend behavior is frozen and must not be changed.
+Status: execution checklist + backlog; items are completed incrementally.
 
 ## 0) Judge Evidence Hooks
 
@@ -120,7 +121,8 @@ Acceptance rule:
    - `WORLD`
    - `TRACE`
    - `EXPLAIN`
-   - `STATUS` (optional)
+   - `JUDGE` (optional)
+   - `HOW IT WORKS` (optional)
 3. Graph semantics:
    - `State Nodes`
    - `Influence Edges`

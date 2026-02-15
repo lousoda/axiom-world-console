@@ -11,7 +11,7 @@ Use this checklist before handing off to teammate or making the release commit.
 
 ## 2) UI Readiness
 
-1. UI loads from public URL and `Validate Link` returns `200` with valid key.
+1. UI loads from public URL and `Validate` returns `200` with valid key.
 2. `/api` proxy path works from UI host.
 3. FLOW (`LIVE`, `PAUSE`, `ACCELERATE`) behaves correctly for at least 10 cycles.
 4. TRACE and EXPLAIN tabs show fresh events after scenario load.

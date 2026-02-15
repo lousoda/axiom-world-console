@@ -19,7 +19,7 @@
 
 3. Run reproducibility (for other people):
 - `WORLD_GATE_KEY=diagkey bash scripts/demo_gate.sh local 8023` -> pass
-- `cd /tmp && WORLD_GATE_KEY=diagkey bash /Users/naturalmetalgear/Documents/world_model_agent/scripts/demo_gate.sh local 8024` -> pass
+- `cd /tmp && WORLD_GATE_KEY=diagkey bash <repo_path>/scripts/demo_gate.sh local 8024` -> pass
 - This confirms path-agnostic script behavior (not tied to one local cwd).
 
 4. Security behavior spot-check:

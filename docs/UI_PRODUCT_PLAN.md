@@ -2,6 +2,7 @@
 
 This file defines the conceptual narrative and product identity for the UI layer.
 Implementation details are tracked in `docs/UI_EXECUTION_CHECKLIST.md`.
+Status: planning artifact; not every item here is implemented yet.
 
 ## 1) Product Intent
 
@@ -106,6 +107,8 @@ If nodes start to read as characters, apply these corrections:
    - `WORLD`
    - `TRACE`
    - `EXPLAIN`
+   - `JUDGE` (optional)
+   - `HOW IT WORKS` (optional)
 3. Trace labels:
    - `Deferred Trace`
    - `Explainability Trace`

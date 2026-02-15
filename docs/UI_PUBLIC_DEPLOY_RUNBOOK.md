@@ -49,7 +49,7 @@ After deploy:
 1. Open UI URL.
 2. Set `API Endpoint` to `/api`.
 3. Paste valid `X-World-Gate`.
-4. `Validate Link` should return `200`.
+4. `Validate` should return `200`.
 
 ## Judge Demo Minimum Check
 
