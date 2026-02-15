@@ -62,9 +62,11 @@ Operational / generated artifacts:
 - Risk register: `docs/DEMO_RISK_REGISTER.md`
 - Runbook: `docs/DEMO_RUNBOOK.md`
 - Ops checklist (single source for operator notes + sanity commands): `docs/OPS_CHECKLIST.md`
+- ASCII architecture snapshot for judges: `docs/ARCHITECTURE_ASCII.md`
 - UI/product differentiation plan (post-freeze): `docs/UI_PRODUCT_PLAN.md`
 - UI execution checklist (must/should/bonus + QA gates): `docs/UI_EXECUTION_CHECKLIST.md`
 - UI public deploy runbook (static host + proxy routing): `docs/UI_PUBLIC_DEPLOY_RUNBOOK.md`
+- Submission and demo-video checklist: `docs/SUBMISSION_VIDEO_CHECKLIST.md`
 - Repo handoff/push discipline: `docs/REPO_GUIDELINES.md`
 - Pre-commit closure list: `docs/PRE_COMMIT_CLOSURE_CHECKLIST.md`
 - One-command gate: `scripts/demo_gate.sh`
