@@ -364,61 +364,6 @@
   background: #171725;
 }
 
-.graph-focus-actions .graph-focus-btn-all {
-  border-color: rgba(202, 196, 234, 0.44);
-  color: #e4ddfa;
-}
-
-.graph-focus-actions .graph-focus-btn-agents {
-  border-color: rgba(117, 215, 255, 0.48);
-  color: #b9e9ff;
-}
-
-.graph-focus-actions .graph-focus-btn-pressure {
-  border-color: rgba(255, 208, 117, 0.5);
-  color: #ffe6a6;
-}
-
-.graph-focus-actions .graph-focus-btn-queue {
-  border-color: rgba(255, 151, 177, 0.5);
-  color: #ffc3d3;
-}
-
-.graph-focus-actions .graph-focus-btn-trace {
-  border-color: rgba(129, 240, 194, 0.5);
-  color: #c1f5df;
-}
-
-.graph-focus-actions .graph-focus-btn-all.flow-active {
-  background: rgba(140, 132, 184, 0.34) !important;
-  border-color: rgba(230, 222, 255, 0.82) !important;
-  color: #f2ecff !important;
-}
-
-.graph-focus-actions .graph-focus-btn-agents.flow-active {
-  background: rgba(72, 152, 190, 0.36) !important;
-  border-color: rgba(162, 230, 255, 0.86) !important;
-  color: #e5f8ff !important;
-}
-
-.graph-focus-actions .graph-focus-btn-pressure.flow-active {
-  background: rgba(188, 136, 58, 0.34) !important;
-  border-color: rgba(255, 221, 146, 0.88) !important;
-  color: #fff4d6 !important;
-}
-
-.graph-focus-actions .graph-focus-btn-queue.flow-active {
-  background: rgba(177, 76, 110, 0.34) !important;
-  border-color: rgba(255, 184, 205, 0.86) !important;
-  color: #ffe8ef !important;
-}
-
-.graph-focus-actions .graph-focus-btn-trace.flow-active {
-  background: rgba(70, 164, 124, 0.34) !important;
-  border-color: rgba(167, 246, 212, 0.86) !important;
-  color: #e6fff3 !important;
-}
-
 .flow-meta {
   margin: 7px 0 0;
   color: var(--ui-text-dim);

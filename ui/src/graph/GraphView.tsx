@@ -33,6 +33,7 @@ export type GraphFocusGroup =
   | "PRESSURE"
   | "QUEUE"
   | "TRACE"
+type ClusterGroup = Exclude<GraphFocusGroup, "ALL">
 
 type GraphViewProps = {
   graph: StateFieldGraph
@@ -115,7 +116,7 @@ const graphOptions: Options = {
   },
 }
 
-const ANCHOR_GROUP_MAP: Record<string, Exclude<GraphFocusGroup, "ALL">> = {
+const ANCHOR_GROUP_MAP: Record<string, ClusterGroup> = {
   state_core: "AGENTS",
   state_inertia: "AGENTS",
   state_pressure: "PRESSURE",
@@ -123,7 +124,60 @@ const ANCHOR_GROUP_MAP: Record<string, Exclude<GraphFocusGroup, "ALL">> = {
   state_trace: "TRACE",
 }
 
-function nodeGroupFor(node: StateFieldGraph["nodes"][number]): GraphFocusGroup {
+type GroupPalette = {
+  anchorBackground: string
+  anchorBorder: string
+  sampleBackground: string
+  sampleBorder: string
+  edgeColor: string
+  edgeHighlight: string
+}
+
+const GROUP_PALETTE: Record<ClusterGroup, GroupPalette> = {
+  AGENTS: {
+    anchorBackground: "rgba(117, 215, 255, 0.38)",
+    anchorBorder: "rgba(196, 236, 255, 0.78)",
+    sampleBackground: "rgba(117, 215, 255, 0.22)",
+    sampleBorder: "rgba(166, 228, 255, 0.34)",
+    edgeColor: "rgba(117, 215, 255, 0.22)",
+    edgeHighlight: "rgba(186, 238, 255, 0.34)",
+  },
+  PRESSURE: {
+    anchorBackground: "rgba(255, 208, 117, 0.36)",
+    anchorBorder: "rgba(255, 233, 180, 0.78)",
+    sampleBackground: "rgba(255, 208, 117, 0.22)",
+    sampleBorder: "rgba(255, 224, 160, 0.34)",
+    edgeColor: "rgba(255, 208, 117, 0.22)",
+    edgeHighlight: "rgba(255, 230, 176, 0.34)",
+  },
+  QUEUE: {
+    anchorBackground: "rgba(255, 151, 177, 0.36)",
+    anchorBorder: "rgba(255, 201, 215, 0.78)",
+    sampleBackground: "rgba(255, 151, 177, 0.21)",
+    sampleBorder: "rgba(255, 192, 209, 0.33)",
+    edgeColor: "rgba(255, 151, 177, 0.21)",
+    edgeHighlight: "rgba(255, 198, 216, 0.33)",
+  },
+  TRACE: {
+    anchorBackground: "rgba(129, 240, 194, 0.36)",
+    anchorBorder: "rgba(198, 250, 225, 0.78)",
+    sampleBackground: "rgba(129, 240, 194, 0.2)",
+    sampleBorder: "rgba(189, 247, 220, 0.31)",
+    edgeColor: "rgba(129, 240, 194, 0.2)",
+    edgeHighlight: "rgba(188, 248, 220, 0.32)",
+  },
+}
+
+const DIM_NODE_COLOR = {
+  background: "rgba(126, 124, 148, 0.12)",
+  border: "rgba(126, 124, 148, 0.12)",
+  highlight: {
+    background: "rgba(126, 124, 148, 0.16)",
+    border: "rgba(126, 124, 148, 0.16)",
+  },
+}
+
+function nodeGroupFor(node: StateFieldGraph["nodes"][number]): ClusterGroup {
   if (node.kind === "anchor") {
     return ANCHOR_GROUP_MAP[node.id] ?? "AGENTS"
   }
@@ -139,6 +193,7 @@ function toVisNodes(
   return nodes.map((node) => {
     const isAnchor = node.kind === "anchor"
     const group = nodeGroupFor(node)
+    const palette = GROUP_PALETTE[group]
     const inFocus = focusAll || group === focusGroup
     const size = isAnchor ? 0.58 : clamp((node.size ?? 0.8) * 0.94, 0.36, 1.46)
     return {
@@ -153,31 +208,26 @@ function toVisNodes(
       physics: false,
       color:
         inFocus || focusAll
-          ? isAnchor
-            ? {
-                background: "rgba(200, 214, 236, 0.36)",
-                border: "rgba(200, 214, 236, 0.36)",
-                highlight: {
-                  background: "rgba(216, 228, 246, 0.5)",
-                  border: "rgba(216, 228, 246, 0.5)",
-                },
-              }
-            : node.color
-          : {
-              background: "rgba(126, 124, 148, 0.12)",
-              border: "rgba(126, 124, 148, 0.12)",
+          ? {
+              background: isAnchor
+                ? palette.anchorBackground
+                : palette.sampleBackground,
+              border: isAnchor ? palette.anchorBorder : palette.sampleBorder,
               highlight: {
-                background: "rgba(126, 124, 148, 0.16)",
-                border: "rgba(126, 124, 148, 0.16)",
+                background: isAnchor
+                  ? palette.anchorBackground
+                  : palette.sampleBackground,
+                border: isAnchor ? palette.anchorBorder : palette.sampleBorder,
               },
-            },
+            }
+          : DIM_NODE_COLOR,
     } as Node
   })
 }
 
 function toVisEdges(
   edges: StateFieldGraph["edges"],
-  nodeGroupById: Map<string, GraphFocusGroup>,
+  nodeGroupById: Map<string, ClusterGroup>,
   focusGroup: GraphFocusGroup,
 ): Edge[] {
   const focusAll = focusGroup === "ALL"
@@ -200,18 +250,27 @@ function toVisEdges(
         : baseWidth * 0.24
     })(),
     color: {
-      color:
-        focusAll ||
-        (nodeGroupById.get(edge.from) ?? "AGENTS") === focusGroup ||
-        (nodeGroupById.get(edge.to) ?? "AGENTS") === focusGroup
-          ? edge.color.color
-          : "rgba(126, 124, 148, 0.12)",
-      highlight:
-        focusAll ||
-        (nodeGroupById.get(edge.from) ?? "AGENTS") === focusGroup ||
-        (nodeGroupById.get(edge.to) ?? "AGENTS") === focusGroup
-          ? edge.color.highlight
-          : "rgba(126, 124, 148, 0.18)",
+      ...((): { color: string; highlight: string } => {
+        const fromGroup: ClusterGroup = nodeGroupById.get(edge.from) ?? "AGENTS"
+        const toGroup: ClusterGroup = nodeGroupById.get(edge.to) ?? "AGENTS"
+        if (!focusAll && fromGroup !== focusGroup && toGroup !== focusGroup) {
+          return {
+            color: "rgba(126, 124, 148, 0.12)",
+            highlight: "rgba(126, 124, 148, 0.18)",
+          }
+        }
+        if (fromGroup === toGroup) {
+          const palette = GROUP_PALETTE[fromGroup]
+          return {
+            color: palette.edgeColor,
+            highlight: palette.edgeHighlight,
+          }
+        }
+        return {
+          color: "rgba(176, 168, 214, 0.18)",
+          highlight: "rgba(208, 198, 244, 0.26)",
+        }
+      })(),
       opacity: (() => {
         const baseOpacity =
           edge.kind === "sample"
@@ -611,7 +670,7 @@ export function GraphView({
     }
     const network = networkRef.current
 
-    const nodeGroupById = new Map<string, GraphFocusGroup>()
+    const nodeGroupById = new Map<string, ClusterGroup>()
     for (const node of graph.nodes) {
       nodeGroupById.set(node.id, nodeGroupFor(node))
     }
