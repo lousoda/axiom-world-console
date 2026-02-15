@@ -141,6 +141,19 @@ function loadSessionValue(key: string, fallback: string): string {
   return window.sessionStorage.getItem(key) ?? fallback
 }
 
+function isLocalApiEndpoint(baseUrl: string): boolean {
+  const trimmed = baseUrl.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost"
+  } catch {
+    return false
+  }
+}
+
 function sanitizeGateKey(rawKey: string): string {
   return rawKey
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
@@ -417,9 +430,14 @@ function App() {
   const canTest = baseUrl.trim().length > 0 && !isTesting
   const hasAuthCredential =
     gateKey.trim().length > 0 || sessionAuthenticated
+  const allowsUnauthedLocalRun = useMemo(
+    () => isLocalApiEndpoint(baseUrl),
+    [baseUrl],
+  )
+  const hasRunCredential = hasAuthCredential || allowsUnauthedLocalRun
   const canLoadScenario =
     baseUrl.trim().length > 0 &&
-    hasAuthCredential &&
+    hasRunCredential &&
     !isScenarioLoading &&
     !isFlowRunning
 
@@ -725,7 +743,7 @@ function App() {
       setFlowBackoffMs(0)
       return
     }
-    if (baseUrl.trim().length === 0 || !hasAuthCredential) {
+    if (baseUrl.trim().length === 0 || !hasRunCredential) {
       setFlowMode("PAUSE")
       setFlowNote("FLOW paused: Base URL or auth credential is missing.")
       return
@@ -849,7 +867,7 @@ function App() {
         window.clearTimeout(timeoutId)
       }
     }
-  }, [baseUrl, flowMode, gateKey, hasAuthCredential, recordStatus])
+  }, [baseUrl, flowMode, gateKey, hasRunCredential, recordStatus])
 
   useEffect(() => {
     const lines = explainSnapshot?.lines
@@ -1315,7 +1333,7 @@ function App() {
       setFlowNote("FLOW paused: API Endpoint is missing.")
       return
     }
-    if (!hasAuthCredential) {
+    if (!hasRunCredential) {
       setFlowMode("PAUSE")
       setFlowNote("FLOW paused: provide X-World-Gate or sign in session first.")
       return
