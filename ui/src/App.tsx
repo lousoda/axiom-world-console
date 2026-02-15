@@ -47,12 +47,19 @@ import type {
   WorldSnapshot,
 } from "./types"
 
+declare const __APP_BUILD_SHA__: string
+declare const __APP_BUILD_TIME__: string
+
 const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:8001"
 const STORAGE_BASE_URL = "world_console_base_url"
 const STORAGE_GATE_KEY = "world_console_gate_key"
 const STORAGE_SCENARIO = "world_console_scenario"
 const STORAGE_SAFE_MODE = "world_console_safe_mode"
 const STORAGE_GRAPH_MODE = "world_console_graph_mode"
+const REPO_URL = "https://github.com/lousoda/axiom-world-console"
+const LIVE_UI_URL = "https://world-model-agent-ui.fly.dev"
+const LIVE_API_URL = "https://world-model-agent-ui.fly.dev/api"
+const RUNBOOK_URL = `${REPO_URL}/blob/main/docs/UI_PUBLIC_DEPLOY_RUNBOOK.md`
 const OBSERVED_CODES = [200, 401, 402, 409, 429, 502] as const
 const FORENSIC_TAG_FILTERS = ["ALL", "DENIAL", "COOLDOWN", "ADAPTATION"] as const
 const FORENSIC_ROW_LIMITS = [20, 40, 80] as const
@@ -143,6 +150,17 @@ function bodyPreview(rawText: string): string {
     return "No response body."
   }
   return rawText
+}
+
+function formatBuildTime(rawIso: string): string {
+  if (!rawIso || rawIso.trim().length === 0) {
+    return "unknown"
+  }
+  const parsed = Date.parse(rawIso)
+  if (Number.isNaN(parsed)) {
+    return rawIso
+  }
+  return new Date(parsed).toLocaleString()
 }
 
 function summarizeKey(value: string): string {
@@ -1115,6 +1133,91 @@ function App() {
     () => judgeChecks.every((check) => check.pass),
     [judgeChecks],
   )
+  const buildStamp = useMemo(() => {
+    const shaRaw =
+      typeof __APP_BUILD_SHA__ === "string" ? __APP_BUILD_SHA__.trim() : ""
+    const timeRaw =
+      typeof __APP_BUILD_TIME__ === "string" ? __APP_BUILD_TIME__.trim() : ""
+    return {
+      sha: shaRaw.length > 0 ? shaRaw : "unknown",
+      time: formatBuildTime(timeRaw),
+    }
+  }, [])
+
+  const judgeExportPayload = useMemo(
+    () => ({
+      generated_at: new Date().toISOString(),
+      scenario: scenarioKey,
+      build: {
+        git_sha: buildStamp.sha,
+        build_time: buildStamp.time,
+      },
+      links: {
+        repository: REPO_URL,
+        live_ui: LIVE_UI_URL,
+        live_api: LIVE_API_URL,
+        runbook: RUNBOOK_URL,
+      },
+      checks: judgeChecks.map((check) => ({
+        id: check.id,
+        label: check.label,
+        pass: check.pass,
+        hint: check.hint,
+      })),
+      counters: {
+        flow_cycles: flowCycles,
+        trace_lines: deferredTraceLines,
+        explain_lines: explainLines,
+        agents_observed: agentsObserved,
+        locations_observed: locationsObserved,
+        capacity_left: capacityLeftObserved,
+      },
+      status_hits: statusHits,
+      autonomy_evidence: autonomyEvidence,
+      notes: {
+        flow_note: flowNote,
+        last_status: lastStatus,
+        last_message: lastMessage,
+      },
+    }),
+    [
+      agentsObserved,
+      autonomyEvidence,
+      buildStamp.sha,
+      buildStamp.time,
+      capacityLeftObserved,
+      deferredTraceLines,
+      explainLines,
+      flowCycles,
+      flowNote,
+      judgeChecks,
+      lastMessage,
+      lastStatus,
+      locationsObserved,
+      scenarioKey,
+      statusHits,
+    ],
+  )
+
+  const handleExportJudgeEvidence = useCallback(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+    const stamp = new Date().toISOString().replace(/[^\dTZ]/g, "-")
+    const filename = `judge-evidence-${stamp}.json`
+    const blob = new Blob([JSON.stringify(judgeExportPayload, null, 2)], {
+      type: "application/json",
+    })
+    const href = window.URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = href
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(href)
+    setLastMessage(`Evidence exported: ${filename}`)
+  }, [judgeExportPayload])
 
   const pressureSignalA =
     scenarioKey === "autonomy_breathing"
@@ -1753,6 +1856,19 @@ function App() {
                     Checks passed: {judgePassCount}/{judgeChecks.length}
                   </span>
                 </div>
+                <div className="judge-tools">
+                  <p className="judge-disclaimer">
+                    Heuristic mapping based on public rules. This is not an official
+                    score calculator.
+                  </p>
+                  <button
+                    type="button"
+                    className="judge-export-button"
+                    onClick={handleExportJudgeEvidence}
+                  >
+                    Export Evidence JSON
+                  </button>
+                </div>
 
                 <div className="judge-grid">
                   <article className="judge-card">
@@ -1797,15 +1913,66 @@ function App() {
                   </article>
 
                   <article className="judge-card">
+                    <h4>Failure Handling</h4>
+                    <ul className="judge-fallback-list">
+                      <li>
+                        <strong>401:</strong> load <code>X-World-Gate</code> or
+                        session-auth, then press Validate.
+                      </li>
+                      <li>
+                        <strong>429:</strong> pause LIVE for ~60 seconds, then resume.
+                      </li>
+                      <li>
+                        <strong>5xx:</strong> pause FLOW, re-run Validate, and retry
+                        scenario load.
+                      </li>
+                      <li>
+                        <strong>Flow stuck:</strong> click Pause, Load Scene, then
+                        start LIVE again.
+                      </li>
+                    </ul>
+                  </article>
+
+                  <article className="judge-card">
                     <h4>Submission Pack</h4>
                     <p>Repository, deployment link, and Monad integration notes should be included.</p>
                     <p>Keep proof artifacts reproducible via:</p>
                     <p className="how-metric">
                       <code>scripts/determinism_proof.sh</code> + <code>scripts/manual_diag.sh</code>
                     </p>
+                    <p className="how-metric">
+                      Build: <code>{buildStamp.sha}</code> · Generated{" "}
+                      <strong>{buildStamp.time}</strong>
+                    </p>
                     <p>
                       Deadline reference: <strong>February 15, 2026, 11:59 PM ET</strong>.
                     </p>
+                  </article>
+
+                  <article className="judge-card">
+                    <h4>Quick Links</h4>
+                    <ul className="judge-link-list">
+                      <li>
+                        <a href={REPO_URL} target="_blank" rel="noreferrer">
+                          Repository
+                        </a>
+                      </li>
+                      <li>
+                        <a href={LIVE_UI_URL} target="_blank" rel="noreferrer">
+                          Live UI
+                        </a>
+                      </li>
+                      <li>
+                        <a href={LIVE_API_URL} target="_blank" rel="noreferrer">
+                          Live API
+                        </a>
+                      </li>
+                      <li>
+                        <a href={RUNBOOK_URL} target="_blank" rel="noreferrer">
+                          Deploy Runbook
+                        </a>
+                      </li>
+                    </ul>
                   </article>
                 </div>
               </div>

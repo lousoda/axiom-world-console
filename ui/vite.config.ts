@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react"
+import { execSync } from "node:child_process"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { defineConfig, type ViteDevServer } from "vite"
 
@@ -50,6 +51,17 @@ function sendJson(res: ServerResponse, code: number, payload: unknown) {
   res.statusCode = code
   res.setHeader("Content-Type", "application/json; charset=utf-8")
   res.end(JSON.stringify(payload))
+}
+
+function detectBuildSha(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", {
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf-8",
+    }).trim()
+  } catch {
+    return "unknown"
+  }
 }
 
 function installApiProxy(server: ViteDevServer) {
@@ -121,7 +133,14 @@ function installApiProxy(server: ViteDevServer) {
   })
 }
 
+const BUILD_SHA = detectBuildSha()
+const BUILD_TIME = new Date().toISOString()
+
 export default defineConfig({
+  define: {
+    __APP_BUILD_SHA__: JSON.stringify(BUILD_SHA),
+    __APP_BUILD_TIME__: JSON.stringify(BUILD_TIME),
+  },
   plugins: [
     react(),
     {
