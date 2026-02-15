@@ -160,7 +160,7 @@ function formatBuildTime(rawIso: string): string {
   if (Number.isNaN(parsed)) {
     return rawIso
   }
-  return new Date(parsed).toLocaleString()
+  return new Date(parsed).toISOString().replace("T", " ").replace("Z", " UTC")
 }
 
 function summarizeKey(value: string): string {
