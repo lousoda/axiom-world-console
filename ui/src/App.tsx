@@ -268,14 +268,14 @@ function trimGraphForPerformance(
   }
 
   const sampleNodes = graph.nodes.filter((node) => node.kind === "sample")
-  if (sampleNodes.length < 1800 && graph.edges.length < 2600) {
+  if (sampleNodes.length < 3000 && graph.edges.length < 3400) {
     return graph
   }
 
   const anchors = graph.nodes.filter((node) => node.kind === "anchor")
   const stride =
-    sampleNodes.length > 4400 ? 4 : sampleNodes.length > 3000 ? 3 : 2
-  const sampleBudget = sampleNodes.length > 4400 ? 1300 : 1700
+    sampleNodes.length > 6200 ? 4 : sampleNodes.length > 4600 ? 3 : 2
+  const sampleBudget = sampleNodes.length > 6200 ? 1600 : 2200
 
   const trimmedSamples: StateFieldGraph["nodes"] = []
   for (
@@ -343,8 +343,8 @@ function App() {
     return saved === "1"
   })
   const [graphDensityMode, setGraphDensityMode] = useState<GraphDensityMode>(() => {
-    const saved = loadStorageValue(STORAGE_GRAPH_MODE, "PERFORMANCE")
-    return saved === "BALANCED" ? "BALANCED" : "PERFORMANCE"
+    const saved = loadStorageValue(STORAGE_GRAPH_MODE, "BALANCED")
+    return saved === "PERFORMANCE" ? "PERFORMANCE" : "BALANCED"
   })
   const [graphFocusGroup, setGraphFocusGroup] = useState<GraphFocusGroup>(() => {
     const saved = loadStorageValue(STORAGE_GRAPH_FOCUS, "ALL")
@@ -1454,6 +1454,15 @@ function App() {
                 {isScenarioLoading ? "Loading Scene..." : "Load Scene"}
               </button>
             </div>
+            <div className="judge-nav-row">
+              <button
+                type="button"
+                className={activeTab === "JUDGE_LAYER" ? "flow-active" : ""}
+                onClick={() => setActiveTab("JUDGE_LAYER")}
+              >
+                Open Judge Layer
+              </button>
+            </div>
           </section>
 
           <section className="flow-card">
@@ -1609,14 +1618,6 @@ function App() {
                 </button>
                 <button
                   className={`tab-btn ${
-                    activeTab === "JUDGE_LAYER" ? "tab-active" : ""
-                  }`}
-                  onClick={() => setActiveTab("JUDGE_LAYER")}
-                >
-                  JUDGE
-                </button>
-                <button
-                  className={`tab-btn ${
                     activeTab === "HOW_IT_WORKS" ? "tab-active" : ""
                   }`}
                   onClick={() => setActiveTab("HOW_IT_WORKS")}
@@ -1641,9 +1642,6 @@ function App() {
                       ? `${graphEdgeCount}/${rawGraphEdgeCount} Links`
                       : `${graphEdgeCount} Links`}
                   </span>
-                  <span className={`hud-pill hud-signal hud-signal-${latestSignal.tone}`}>
-                    Signal {latestSignal.label}
-                  </span>
                 </div>
               ) : null}
             </div>
@@ -1651,7 +1649,11 @@ function App() {
             {activeTab === "WORLD" ? (
               <div className="tab-panel tab-panel-world">
                 <div className="world-stage">
-                  <aside className="world-legend-panel">
+                  <aside
+                    className={`world-legend-panel ${
+                      isInspectorOpen ? "world-legend-hidden" : ""
+                    }`}
+                  >
                     <h4>Graph Legend</h4>
                     <ul className="world-legend-list">
                       {WORLD_GRAPH_LEGEND.map((entry) => (
