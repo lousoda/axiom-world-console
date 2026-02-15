@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -20,7 +22,6 @@ import {
   probeMetrics,
 } from "./api/client"
 import { executeFlowCycle } from "./flow/flowController"
-import { GraphView } from "./graph/GraphView"
 import {
   EXPLAIN_PULL_EVERY,
   TRACE_PULL_EVERY,
@@ -35,7 +36,10 @@ import {
   type EvidenceTag,
   zeroAutonomyEvidence,
 } from "./model/evidence"
-import { buildStateFieldGraph } from "./model/stateFieldMapper"
+import {
+  buildStateFieldGraph,
+  type StateFieldGraph,
+} from "./model/stateFieldMapper"
 import type {
   ExplainRecentSnapshot,
   FlowMode,
@@ -48,7 +52,10 @@ const STORAGE_BASE_URL = "world_console_base_url"
 const STORAGE_GATE_KEY = "world_console_gate_key"
 const STORAGE_SCENARIO = "world_console_scenario"
 const STORAGE_SAFE_MODE = "world_console_safe_mode"
+const STORAGE_GRAPH_MODE = "world_console_graph_mode"
 const OBSERVED_CODES = [200, 401, 402, 409, 429, 502] as const
+const FORENSIC_TAG_FILTERS = ["ALL", "DENIAL", "COOLDOWN", "ADAPTATION"] as const
+const FORENSIC_ROW_LIMITS = [20, 40, 80] as const
 const TRACE_LIMIT = 40
 const EXPLAIN_LIMIT = 80
 const FLOW_LIMIT_AGENTS = 50
@@ -61,6 +68,8 @@ const SCENARIO_OPTIONS: Array<{ key: ScenarioKey; label: string }> = [
 ]
 
 type ObservedCode = (typeof OBSERVED_CODES)[number]
+type ForensicTagFilter = (typeof FORENSIC_TAG_FILTERS)[number]
+type GraphDensityMode = "BALANCED" | "PERFORMANCE"
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN" | "JUDGE_LAYER" | "HOW_IT_WORKS"
 
 type JudgeCheck = {
@@ -69,6 +78,11 @@ type JudgeCheck = {
   pass: boolean
   hint: string
 }
+
+const GraphView = lazy(async () => {
+  const module = await import("./graph/GraphView")
+  return { default: module.GraphView }
+})
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -206,6 +220,56 @@ function collapseForensicRows(lines: string[]): ForensicDisplayRow[] {
   }))
 }
 
+function trimGraphForPerformance(
+  graph: StateFieldGraph,
+  mode: GraphDensityMode,
+): StateFieldGraph {
+  if (mode !== "PERFORMANCE") {
+    return graph
+  }
+
+  const sampleNodes = graph.nodes.filter((node) => node.kind === "sample")
+  if (sampleNodes.length < 1800 && graph.edges.length < 2600) {
+    return graph
+  }
+
+  const anchors = graph.nodes.filter((node) => node.kind === "anchor")
+  const stride =
+    sampleNodes.length > 4400 ? 4 : sampleNodes.length > 3000 ? 3 : 2
+  const sampleBudget = sampleNodes.length > 4400 ? 1300 : 1700
+
+  const trimmedSamples: StateFieldGraph["nodes"] = []
+  for (
+    let index = 0;
+    index < sampleNodes.length && trimmedSamples.length < sampleBudget;
+    index += stride
+  ) {
+    trimmedSamples.push(sampleNodes[index])
+  }
+
+  const keptNodeIds = new Set<string>([
+    ...anchors.map((node) => node.id),
+    ...trimmedSamples.map((node) => node.id),
+  ])
+
+  const maxEdges = graph.edges.length > 4400 ? 2200 : 2800
+  const trimmedEdges: StateFieldGraph["edges"] = []
+  for (const edge of graph.edges) {
+    if (!keptNodeIds.has(edge.from) || !keptNodeIds.has(edge.to)) {
+      continue
+    }
+    trimmedEdges.push(edge)
+    if (trimmedEdges.length >= maxEdges) {
+      break
+    }
+  }
+
+  return {
+    nodes: [...anchors, ...trimmedSamples],
+    edges: trimmedEdges,
+  }
+}
+
 function App() {
   const [baseUrl, setBaseUrl] = useState<string>(() =>
     loadStorageValue(STORAGE_BASE_URL, detectDefaultBaseUrl()),
@@ -239,6 +303,10 @@ function App() {
     const saved = loadStorageValue(STORAGE_SAFE_MODE, "1")
     return saved === "1"
   })
+  const [graphDensityMode, setGraphDensityMode] = useState<GraphDensityMode>(() => {
+    const saved = loadStorageValue(STORAGE_GRAPH_MODE, "BALANCED")
+    return saved === "PERFORMANCE" ? "PERFORMANCE" : "BALANCED"
+  })
   const [flowCycles, setFlowCycles] = useState<number>(0)
   const [flowBackoffMs, setFlowBackoffMs] = useState<number>(0)
   const [activeTab, setActiveTab] = useState<ConsoleTab>("WORLD")
@@ -265,6 +333,12 @@ function App() {
   const [explainSnapshot, setExplainSnapshot] = useState<ExplainRecentSnapshot | null>(
     null,
   )
+  const [traceSearchTerm, setTraceSearchTerm] = useState<string>("")
+  const [traceTagFilter, setTraceTagFilter] = useState<ForensicTagFilter>("ALL")
+  const [traceRowLimit, setTraceRowLimit] = useState<number>(TRACE_LIMIT)
+  const [explainSearchTerm, setExplainSearchTerm] = useState<string>("")
+  const [explainTagFilter, setExplainTagFilter] = useState<ForensicTagFilter>("ALL")
+  const [explainRowLimit, setExplainRowLimit] = useState<number>(EXPLAIN_LIMIT)
   const [autonomyEvidence, setAutonomyEvidence] = useState<AutonomyEvidenceCounters>(
     () => zeroAutonomyEvidence(),
   )
@@ -826,8 +900,14 @@ function App() {
       }),
     [deferredTraceLines, explainLines, metricsSnapshot, worldSnapshot],
   )
-  const graphNodeCount = stateFieldGraph.nodes.length
-  const graphEdgeCount = stateFieldGraph.edges.length
+  const renderedStateFieldGraph = useMemo(
+    () => trimGraphForPerformance(stateFieldGraph, graphDensityMode),
+    [graphDensityMode, stateFieldGraph],
+  )
+  const rawGraphNodeCount = stateFieldGraph.nodes.length
+  const rawGraphEdgeCount = stateFieldGraph.edges.length
+  const graphNodeCount = renderedStateFieldGraph.nodes.length
+  const graphEdgeCount = renderedStateFieldGraph.edges.length
   const pressureRatio = useMemo(() => {
     const perTick = Math.max(1, metricsSnapshot?.workshop_capacity_per_tick ?? 1)
     const left = clamp(metricsSnapshot?.workshop_capacity_left ?? perTick, 0, perTick)
@@ -896,6 +976,36 @@ function App() {
     const lines = explainSnapshot?.lines?.slice().reverse() ?? []
     return collapseForensicRows(lines)
   }, [explainSnapshot])
+  const filteredTraceRows = useMemo(() => {
+    const needle = traceSearchTerm.trim().toLowerCase()
+    const tagged =
+      traceTagFilter === "ALL"
+        ? traceRows
+        : traceRows.filter((row) => row.tags.includes(traceTagFilter))
+    const searched =
+      needle.length === 0
+        ? tagged
+        : tagged.filter((row) => row.text.toLowerCase().includes(needle))
+    return searched.slice(0, traceRowLimit)
+  }, [traceRowLimit, traceRows, traceSearchTerm, traceTagFilter])
+
+  const filteredExplainRows = useMemo(() => {
+    const needle = explainSearchTerm.trim().toLowerCase()
+    const tagged =
+      explainTagFilter === "ALL"
+        ? explainRows
+        : explainRows.filter((row) => row.tags.includes(explainTagFilter))
+    const searched =
+      needle.length === 0
+        ? tagged
+        : tagged.filter((row) => row.text.toLowerCase().includes(needle))
+    return searched.slice(0, explainRowLimit)
+  }, [
+    explainRowLimit,
+    explainRows,
+    explainSearchTerm,
+    explainTagFilter,
+  ])
   const monadGateSignals = useMemo(
     () => ({
       unauthorized: statusHits[401],
@@ -1212,6 +1322,31 @@ function App() {
                 Safe Mode: {safeMode ? "ON" : "OFF"}
               </button>
             </div>
+            <div className="graph-mode-row">
+              <span className="graph-mode-label">Graph Detail</span>
+              <div className="graph-mode-actions">
+                <button
+                  className={graphDensityMode === "BALANCED" ? "flow-active" : ""}
+                  onClick={() => {
+                    setGraphDensityMode("BALANCED")
+                    persistStorageValue(STORAGE_GRAPH_MODE, "BALANCED")
+                  }}
+                  type="button"
+                >
+                  Balanced
+                </button>
+                <button
+                  className={graphDensityMode === "PERFORMANCE" ? "flow-active" : ""}
+                  onClick={() => {
+                    setGraphDensityMode("PERFORMANCE")
+                    persistStorageValue(STORAGE_GRAPH_MODE, "PERFORMANCE")
+                  }}
+                  type="button"
+                >
+                  Performance
+                </button>
+              </div>
+            </div>
             <p className="flow-meta">
               Cadence {flowCadenceLabel} · {flowTempoLabel}
             </p>
@@ -1309,8 +1444,16 @@ function App() {
                   <span className="hud-pill">
                     Capacity {capacityLeftObserved ?? "n/a"}
                   </span>
-                  <span className="hud-pill">{graphNodeCount} Nodes</span>
-                  <span className="hud-pill">{graphEdgeCount} Links</span>
+                  <span className="hud-pill">
+                    {graphDensityMode === "PERFORMANCE"
+                      ? `${graphNodeCount}/${rawGraphNodeCount} Nodes`
+                      : `${graphNodeCount} Nodes`}
+                  </span>
+                  <span className="hud-pill">
+                    {graphDensityMode === "PERFORMANCE"
+                      ? `${graphEdgeCount}/${rawGraphEdgeCount} Links`
+                      : `${graphEdgeCount} Links`}
+                  </span>
                 </div>
               ) : null}
             </div>
@@ -1328,12 +1471,20 @@ function App() {
                       eventPulse !== "none" ? `pulse-${eventPulse}` : ""
                     }`}
                   />
-                  <GraphView
-                    graph={stateFieldGraph}
-                    fx={graphFx}
-                    activity={graphActivity}
-                    safeMode={safeMode}
-                  />
+                  <Suspense
+                    fallback={
+                      <div className="world-graph-loading">
+                        Loading world graph...
+                      </div>
+                    }
+                  >
+                    <GraphView
+                      graph={renderedStateFieldGraph}
+                      fx={graphFx}
+                      activity={graphActivity}
+                      safeMode={safeMode}
+                    />
+                  </Suspense>
 
                   <button
                     className="inspector-toggle"
@@ -1382,6 +1533,51 @@ function App() {
                   <h3>TRACE</h3>
                   <p>Deferred event stream, newest first.</p>
                 </div>
+                <div className="forensic-controls">
+                  <div className="forensic-search">
+                    <input
+                      type="text"
+                      value={traceSearchTerm}
+                      onChange={(event) => setTraceSearchTerm(event.target.value)}
+                      placeholder="Search trace lines"
+                      autoComplete="off"
+                    />
+                    <span className="forensic-count">
+                      Showing {filteredTraceRows.length}/{traceRows.length}
+                    </span>
+                  </div>
+                  <div className="forensic-filter-row">
+                    <div className="forensic-tags">
+                      {FORENSIC_TAG_FILTERS.map((tag) => (
+                        <button
+                          key={tag}
+                          className={
+                            traceTagFilter === tag ? "forensic-tag-active" : ""
+                          }
+                          onClick={() => setTraceTagFilter(tag)}
+                          type="button"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="forensic-limit-label">
+                      Rows
+                      <select
+                        value={traceRowLimit}
+                        onChange={(event) =>
+                          setTraceRowLimit(Number.parseInt(event.target.value, 10))
+                        }
+                      >
+                        {FORENSIC_ROW_LIMITS.map((limitValue) => (
+                          <option key={limitValue} value={limitValue}>
+                            {limitValue}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
                 {latestEvidencePreview.length > 0 ? (
                   <section className="evidence-peek">
                     <h4>Latest Evidence</h4>
@@ -1406,35 +1602,35 @@ function App() {
                 ) : null}
                 {traceRows.length === 0 ? (
                   <p className="empty-panel">No trace lines yet.</p>
+                ) : filteredTraceRows.length === 0 ? (
+                  <p className="empty-panel">No TRACE rows match current filters.</p>
                 ) : (
                   <ul className="trace-list">
-                    {traceRows.map((row, index) => {
-                        return (
-                          <li key={index} className="trace-item forensic-item">
-                            <div className="forensic-meta">
-                              <span className="forensic-tick">
-                                {row.tickLabel ?? "event"}
-                              </span>
-                              {row.tags.length > 0 || row.repeatCount > 1 ? (
-                                <div className="evidence-tags">
-                                  {row.tags.map((tag) => (
-                                    <span
-                                      key={tag}
-                                      className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
-                                    >
-                                      {tag}
-                                    </span>
-                                  ))}
-                                  {row.repeatCount > 1 ? (
-                                    <span className="evidence-repeat">x{row.repeatCount}</span>
-                                  ) : null}
-                                </div>
+                    {filteredTraceRows.map((row, index) => (
+                      <li key={index} className="trace-item forensic-item">
+                        <div className="forensic-meta">
+                          <span className="forensic-tick">
+                            {row.tickLabel ?? "event"}
+                          </span>
+                          {row.tags.length > 0 || row.repeatCount > 1 ? (
+                            <div className="evidence-tags">
+                              {row.tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                              {row.repeatCount > 1 ? (
+                                <span className="evidence-repeat">x{row.repeatCount}</span>
                               ) : null}
                             </div>
-                            <pre>{row.text}</pre>
-                          </li>
-                        )
-                      })}
+                          ) : null}
+                        </div>
+                        <pre>{row.text}</pre>
+                      </li>
+                    ))}
                   </ul>
                 )}
               </div>
@@ -1445,6 +1641,51 @@ function App() {
                 <div className="forensic-head">
                   <h3>EXPLAIN</h3>
                   <p>Forensic reasoning trail after each world step.</p>
+                </div>
+                <div className="forensic-controls">
+                  <div className="forensic-search">
+                    <input
+                      type="text"
+                      value={explainSearchTerm}
+                      onChange={(event) => setExplainSearchTerm(event.target.value)}
+                      placeholder="Search explain lines"
+                      autoComplete="off"
+                    />
+                    <span className="forensic-count">
+                      Showing {filteredExplainRows.length}/{explainRows.length}
+                    </span>
+                  </div>
+                  <div className="forensic-filter-row">
+                    <div className="forensic-tags">
+                      {FORENSIC_TAG_FILTERS.map((tag) => (
+                        <button
+                          key={tag}
+                          className={
+                            explainTagFilter === tag ? "forensic-tag-active" : ""
+                          }
+                          onClick={() => setExplainTagFilter(tag)}
+                          type="button"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="forensic-limit-label">
+                      Rows
+                      <select
+                        value={explainRowLimit}
+                        onChange={(event) =>
+                          setExplainRowLimit(Number.parseInt(event.target.value, 10))
+                        }
+                      >
+                        {FORENSIC_ROW_LIMITS.map((limitValue) => (
+                          <option key={limitValue} value={limitValue}>
+                            {limitValue}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </div>
                 {latestEvidencePreview.length > 0 ? (
                   <section className="evidence-peek">
@@ -1470,31 +1711,31 @@ function App() {
                 ) : null}
                 {explainRows.length === 0 ? (
                   <p className="empty-panel">No explain lines yet.</p>
+                ) : filteredExplainRows.length === 0 ? (
+                  <p className="empty-panel">No EXPLAIN rows match current filters.</p>
                 ) : (
                   <ul className="explain-list">
-                    {explainRows.map((row, index) => {
-                        return (
-                          <li key={index} className="forensic-item">
-                            <div className="forensic-meta">
-                              <span className="forensic-tick">
-                                {row.tickLabel ?? "event"}
-                              </span>
-                              {row.tags.map((tag) => (
-                                <span
-                                  key={tag}
-                                  className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                              {row.repeatCount > 1 ? (
-                                <span className="evidence-repeat">x{row.repeatCount}</span>
-                              ) : null}
-                            </div>
-                            <div className="explain-line">{row.text}</div>
-                          </li>
-                        )
-                      })}
+                    {filteredExplainRows.map((row, index) => (
+                      <li key={index} className="forensic-item">
+                        <div className="forensic-meta">
+                          <span className="forensic-tick">
+                            {row.tickLabel ?? "event"}
+                          </span>
+                          {row.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className={`evidence-tag evidence-tag-${tag.toLowerCase()}`}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                          {row.repeatCount > 1 ? (
+                            <span className="evidence-repeat">x{row.repeatCount}</span>
+                          ) : null}
+                        </div>
+                        <div className="explain-line">{row.text}</div>
+                      </li>
+                    ))}
                   </ul>
                 )}
               </div>
