@@ -1531,7 +1531,9 @@ function App() {
                 {GRAPH_FOCUS_OPTIONS.map((option) => (
                   <button
                     key={option.key}
-                    className={graphFocusGroup === option.key ? "flow-active" : ""}
+                    className={`graph-focus-btn graph-focus-btn-${option.key.toLowerCase()} ${
+                      graphFocusGroup === option.key ? "flow-active" : ""
+                    }`}
                     onClick={() => {
                       setGraphFocusGroup(option.key)
                       persistStorageValue(STORAGE_GRAPH_FOCUS, option.key)
