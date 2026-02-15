@@ -27,11 +27,19 @@ type GraphActivity = {
   cycle: number
 }
 
+export type GraphFocusGroup =
+  | "ALL"
+  | "AGENTS"
+  | "PRESSURE"
+  | "QUEUE"
+  | "TRACE"
+
 type GraphViewProps = {
   graph: StateFieldGraph
   fx?: GraphFx
   activity?: GraphActivity
   safeMode?: boolean
+  focusGroup?: GraphFocusGroup
 }
 
 const DEFAULT_ACTIVITY: GraphActivity = {
@@ -107,56 +115,129 @@ const graphOptions: Options = {
   },
 }
 
-function toVisNodes(nodes: StateFieldGraph["nodes"]): Node[] {
+const ANCHOR_GROUP_MAP: Record<string, Exclude<GraphFocusGroup, "ALL">> = {
+  state_core: "AGENTS",
+  state_inertia: "AGENTS",
+  state_pressure: "PRESSURE",
+  state_latency: "QUEUE",
+  state_trace: "TRACE",
+}
+
+function nodeGroupFor(node: StateFieldGraph["nodes"][number]): GraphFocusGroup {
+  if (node.kind === "anchor") {
+    return ANCHOR_GROUP_MAP[node.id] ?? "AGENTS"
+  }
+  return ANCHOR_GROUP_MAP[node.anchorId ?? "state_core"] ?? "AGENTS"
+}
+
+function toVisNodes(
+  nodes: StateFieldGraph["nodes"],
+  focusGroup: GraphFocusGroup,
+): Node[] {
+  const focusAll = focusGroup === "ALL"
+
   return nodes.map((node) => {
     const isAnchor = node.kind === "anchor"
+    const group = nodeGroupFor(node)
+    const inFocus = focusAll || group === focusGroup
     const size = isAnchor ? 0.58 : clamp((node.size ?? 0.8) * 0.94, 0.36, 1.46)
     return {
       id: node.id,
       label: "",
       shape: "dot",
       borderWidth: 0,
-      size,
+      size: inFocus ? size : size * 0.66,
       x: node.x,
       y: node.y,
       fixed: node.fixed ? { x: true, y: true } : false,
       physics: false,
-      color: isAnchor
-        ? {
-            background: "rgba(200, 214, 236, 0.36)",
-            border: "rgba(200, 214, 236, 0.36)",
-            highlight: {
-              background: "rgba(216, 228, 246, 0.5)",
-              border: "rgba(216, 228, 246, 0.5)",
+      color:
+        inFocus || focusAll
+          ? isAnchor
+            ? {
+                background: "rgba(200, 214, 236, 0.36)",
+                border: "rgba(200, 214, 236, 0.36)",
+                highlight: {
+                  background: "rgba(216, 228, 246, 0.5)",
+                  border: "rgba(216, 228, 246, 0.5)",
+                },
+              }
+            : node.color
+          : {
+              background: "rgba(126, 124, 148, 0.12)",
+              border: "rgba(126, 124, 148, 0.12)",
+              highlight: {
+                background: "rgba(126, 124, 148, 0.16)",
+                border: "rgba(126, 124, 148, 0.16)",
+              },
             },
-          }
-        : node.color,
     } as Node
   })
 }
 
-function toVisEdges(edges: StateFieldGraph["edges"]): Edge[] {
+function toVisEdges(
+  edges: StateFieldGraph["edges"],
+  nodeGroupById: Map<string, GraphFocusGroup>,
+  focusGroup: GraphFocusGroup,
+): Edge[] {
+  const focusAll = focusGroup === "ALL"
   return edges.map((edge) => ({
     id: edge.id,
     from: edge.from,
     to: edge.to,
-    width:
-      edge.kind === "sample"
-        ? 0.009 + clamp(edge.value, 0, 1) * 0.01
-        : 0.016 + clamp(edge.value, 0, 6) * 0.002,
-    color: {
-      color: edge.color.color,
-      highlight: edge.color.highlight,
-      opacity:
+    width: (() => {
+      const baseWidth =
         edge.kind === "sample"
-          ? clamp(edge.color.opacity * 0.14, 0.015, 0.065)
-          : clamp(edge.color.opacity * 0.12, 0.02, 0.055),
+          ? 0.009 + clamp(edge.value, 0, 1) * 0.01
+          : 0.016 + clamp(edge.value, 0, 6) * 0.002
+      if (focusAll) {
+        return baseWidth
+      }
+      const fromGroup = nodeGroupById.get(edge.from) ?? "AGENTS"
+      const toGroup = nodeGroupById.get(edge.to) ?? "AGENTS"
+      return fromGroup === focusGroup || toGroup === focusGroup
+        ? baseWidth
+        : baseWidth * 0.24
+    })(),
+    color: {
+      color:
+        focusAll ||
+        (nodeGroupById.get(edge.from) ?? "AGENTS") === focusGroup ||
+        (nodeGroupById.get(edge.to) ?? "AGENTS") === focusGroup
+          ? edge.color.color
+          : "rgba(126, 124, 148, 0.12)",
+      highlight:
+        focusAll ||
+        (nodeGroupById.get(edge.from) ?? "AGENTS") === focusGroup ||
+        (nodeGroupById.get(edge.to) ?? "AGENTS") === focusGroup
+          ? edge.color.highlight
+          : "rgba(126, 124, 148, 0.18)",
+      opacity: (() => {
+        const baseOpacity =
+          edge.kind === "sample"
+            ? clamp(edge.color.opacity * 0.14, 0.015, 0.065)
+            : clamp(edge.color.opacity * 0.12, 0.02, 0.055)
+        if (focusAll) {
+          return baseOpacity
+        }
+        const fromGroup = nodeGroupById.get(edge.from) ?? "AGENTS"
+        const toGroup = nodeGroupById.get(edge.to) ?? "AGENTS"
+        return fromGroup === focusGroup || toGroup === focusGroup
+          ? baseOpacity
+          : clamp(baseOpacity * 0.25, 0.008, 0.02)
+      })(),
       inherit: false,
     },
   }))
 }
 
-export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewProps) {
+export function GraphView({
+  graph,
+  fx,
+  activity,
+  safeMode = false,
+  focusGroup = "ALL",
+}: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const overlayRef = useRef<HTMLCanvasElement | null>(null)
   const networkRef = useRef<Network | null>(null)
@@ -530,9 +611,14 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
     }
     const network = networkRef.current
 
+    const nodeGroupById = new Map<string, GraphFocusGroup>()
+    for (const node of graph.nodes) {
+      nodeGroupById.set(node.id, nodeGroupFor(node))
+    }
+
     network.setData({
-      nodes: toVisNodes(graph.nodes),
-      edges: toVisEdges(graph.edges),
+      nodes: toVisNodes(graph.nodes, focusGroup),
+      edges: toVisEdges(graph.edges, nodeGroupById, focusGroup),
     })
 
     const heavyGraph = graph.nodes.length > 3400 || graph.edges.length > 3000
@@ -588,7 +674,7 @@ export function GraphView({ graph, fx, activity, safeMode = false }: GraphViewPr
       })
       fittedRef.current = true
     }
-  }, [graph, safeMode])
+  }, [focusGroup, graph, safeMode])
 
   return (
     <div className="graph-canvas" style={fxStyle}>

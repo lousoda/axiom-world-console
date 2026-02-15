@@ -56,6 +56,7 @@ const STORAGE_GATE_KEY = "world_console_gate_key"
 const STORAGE_SCENARIO = "world_console_scenario"
 const STORAGE_SAFE_MODE = "world_console_safe_mode"
 const STORAGE_GRAPH_MODE = "world_console_graph_mode"
+const STORAGE_GRAPH_FOCUS = "world_console_graph_focus"
 const REPO_URL = "https://github.com/lousoda/axiom-world-console"
 const LIVE_UI_URL = "https://world-model-agent-ui.fly.dev"
 const LIVE_API_URL = "https://world-model-agent-ui.fly.dev/api"
@@ -77,6 +78,7 @@ const SCENARIO_OPTIONS: Array<{ key: ScenarioKey; label: string }> = [
 type ObservedCode = (typeof OBSERVED_CODES)[number]
 type ForensicTagFilter = (typeof FORENSIC_TAG_FILTERS)[number]
 type GraphDensityMode = "BALANCED" | "PERFORMANCE"
+type GraphFocusGroup = "ALL" | "AGENTS" | "PRESSURE" | "QUEUE" | "TRACE"
 type ConsoleTab = "WORLD" | "TRACE" | "EXPLAIN" | "JUDGE_LAYER" | "HOW_IT_WORKS"
 
 type JudgeCheck = {
@@ -85,6 +87,25 @@ type JudgeCheck = {
   pass: boolean
   hint: string
 }
+
+const GRAPH_FOCUS_OPTIONS: Array<{ key: GraphFocusGroup; label: string }> = [
+  { key: "ALL", label: "All" },
+  { key: "AGENTS", label: "Agents" },
+  { key: "PRESSURE", label: "Pressure" },
+  { key: "QUEUE", label: "Queue" },
+  { key: "TRACE", label: "Trace" },
+]
+
+const WORLD_GRAPH_LEGEND: Array<{
+  key: Exclude<GraphFocusGroup, "ALL">
+  label: string
+  note: string
+}> = [
+  { key: "AGENTS", label: "Agent Core", note: "core + inertia state" },
+  { key: "PRESSURE", label: "Constraint Pressure", note: "capacity pressure cluster" },
+  { key: "QUEUE", label: "Action Queue", note: "latency and queue dynamics" },
+  { key: "TRACE", label: "Forensic Trace", note: "log + explain evidence cluster" },
+]
 
 const GraphView = lazy(async () => {
   const module = await import("./graph/GraphView")
@@ -322,8 +343,20 @@ function App() {
     return saved === "1"
   })
   const [graphDensityMode, setGraphDensityMode] = useState<GraphDensityMode>(() => {
-    const saved = loadStorageValue(STORAGE_GRAPH_MODE, "BALANCED")
-    return saved === "PERFORMANCE" ? "PERFORMANCE" : "BALANCED"
+    const saved = loadStorageValue(STORAGE_GRAPH_MODE, "PERFORMANCE")
+    return saved === "BALANCED" ? "BALANCED" : "PERFORMANCE"
+  })
+  const [graphFocusGroup, setGraphFocusGroup] = useState<GraphFocusGroup>(() => {
+    const saved = loadStorageValue(STORAGE_GRAPH_FOCUS, "ALL")
+    if (
+      saved === "AGENTS" ||
+      saved === "PRESSURE" ||
+      saved === "QUEUE" ||
+      saved === "TRACE"
+    ) {
+      return saved
+    }
+    return "ALL"
   })
   const [flowCycles, setFlowCycles] = useState<number>(0)
   const [flowBackoffMs, setFlowBackoffMs] = useState<number>(0)
@@ -981,6 +1014,39 @@ function App() {
     }
     return preview
   }, [explainSnapshot])
+  const latestSignal = useMemo(() => {
+    const newest = latestEvidencePreview[0]
+    if (!newest) {
+      return {
+        label: "none",
+        detail: "No tagged evidence yet.",
+        tone: "idle" as const,
+      }
+    }
+    const prioritizedTag =
+      newest.tags.find((tag) => tag === "DENIAL" || tag === "COOLDOWN" || tag === "ADAPTATION") ??
+      newest.tags[0]
+    const tickLabel = extractTickLabel(newest.text)
+    if (prioritizedTag === "DENIAL") {
+      return {
+        label: "denial",
+        detail: tickLabel ? `${tickLabel} · capacity denial` : "capacity denial observed",
+        tone: "denial" as const,
+      }
+    }
+    if (prioritizedTag === "COOLDOWN") {
+      return {
+        label: "cooldown",
+        detail: tickLabel ? `${tickLabel} · cooldown penalty` : "cooldown penalty observed",
+        tone: "cooldown" as const,
+      }
+    }
+    return {
+      label: "adaptation",
+      detail: tickLabel ? `${tickLabel} · adaptive behavior` : "adaptive behavior observed",
+      tone: "adaptation" as const,
+    }
+  }, [latestEvidencePreview])
 
   const traceRows = useMemo(() => {
     const lines = traceSnapshot
@@ -1450,6 +1516,24 @@ function App() {
                 </button>
               </div>
             </div>
+            <div className="graph-focus-row">
+              <span className="graph-mode-label">Graph Focus</span>
+              <div className="graph-focus-actions">
+                {GRAPH_FOCUS_OPTIONS.map((option) => (
+                  <button
+                    key={option.key}
+                    className={graphFocusGroup === option.key ? "flow-active" : ""}
+                    onClick={() => {
+                      setGraphFocusGroup(option.key)
+                      persistStorageValue(STORAGE_GRAPH_FOCUS, option.key)
+                    }}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <p className="flow-meta">
               Cadence {flowCadenceLabel} · {flowTempoLabel}
             </p>
@@ -1557,6 +1641,9 @@ function App() {
                       ? `${graphEdgeCount}/${rawGraphEdgeCount} Links`
                       : `${graphEdgeCount} Links`}
                   </span>
+                  <span className={`hud-pill hud-signal hud-signal-${latestSignal.tone}`}>
+                    Signal {latestSignal.label}
+                  </span>
                 </div>
               ) : null}
             </div>
@@ -1564,6 +1651,26 @@ function App() {
             {activeTab === "WORLD" ? (
               <div className="tab-panel tab-panel-world">
                 <div className="world-stage">
+                  <aside className="world-legend-panel">
+                    <h4>Graph Legend</h4>
+                    <ul className="world-legend-list">
+                      {WORLD_GRAPH_LEGEND.map((entry) => (
+                        <li key={entry.key}>
+                          <span className={`legend-dot legend-${entry.key.toLowerCase()}`} />
+                          <div>
+                            <strong>{entry.label}</strong>
+                            <small>{entry.note}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="world-legend-focus">
+                      Focus: <strong>{graphFocusGroup}</strong>
+                    </p>
+                    <p className={`world-legend-signal signal-${latestSignal.tone}`}>
+                      Last signal: {latestSignal.detail}
+                    </p>
+                  </aside>
                   {agentsObserved === 0 ? (
                     <div className="world-alert">
                       No agents active. Choose scenario and press Load Scene.
@@ -1586,6 +1693,7 @@ function App() {
                       fx={graphFx}
                       activity={graphActivity}
                       safeMode={safeMode}
+                      focusGroup={graphFocusGroup}
                     />
                   </Suspense>
 
