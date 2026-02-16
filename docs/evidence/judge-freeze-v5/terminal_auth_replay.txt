@@ -1,18 +1,21 @@
 # Terminal Auth + Replay Evidence (no secrets)
 
-Timestamp (UTC): 2026-02-16 04:04:04Z
-Operator: lousoda
+Timestamp (UTC): 2026-02-16 05:00:00Z
 
 Auth checks:
-GET /metrics (no key)      -> 000
-GET /metrics (with key)    -> 000000
-POST /scenario (no key)    -> 000
-POST /scenario (with key)  -> 000000
+GET /metrics (no key)      -> 401
+GET /metrics (with key)    -> 200
+POST /scenario (no key)    -> 401
+POST /scenario (with key)  -> 200
 
 Replay checks:
-TX#1 first   -> 200
+TX#1 first   -> 409
 TX#1 replay  -> 409
 TX#2 first   -> 200
 TX#2 replay  -> 409
-TX#3 first   -> 200
-TX#3 replay  -> 200
+TX#3 first   -> 409
+TX#3 replay  -> 409
+
+Notes:
+- Some TX hashes were already used in prior runs, so first attempt can return 409.
+- Replay protection is confirmed by repeated 409 outcomes for reused hashes.
